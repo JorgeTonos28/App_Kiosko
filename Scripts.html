@@ -511,6 +511,7 @@
       App.cart = [];
       App.discount = 0;
       App.received = 0;
+      if (App.route === 'pos') renderPos();
       showReceipt(result.invoice, true);
       showToast('Factura guardada e inventario actualizado.');
     } catch (error) {
@@ -1346,18 +1347,22 @@
 
   function openModal(content, size) {
     document.getElementById('modalRoot').innerHTML = '<div class="modal-overlay" onmousedown="overlayPointerDown(event)" onclick="overlayClose(event, \'modal\')"><div class="modal ' + (size === 'wide' ? 'modal--wide' : '') + '">' + content + '</div></div>';
+    updateOverlayScrollLock();
   }
 
   function closeModal() {
     document.getElementById('modalRoot').innerHTML = '';
+    updateOverlayScrollLock();
   }
 
   function openDrawer(content) {
     document.getElementById('drawerRoot').innerHTML = '<div class="drawer-overlay" onmousedown="overlayPointerDown(event)" onclick="overlayClose(event, \'drawer\')"><aside class="drawer">' + content + '</aside></div>';
+    updateOverlayScrollLock();
   }
 
   function closeDrawer() {
     document.getElementById('drawerRoot').innerHTML = '';
+    updateOverlayScrollLock();
   }
 
   function overlayPointerDown(event) {
@@ -1377,15 +1382,25 @@
       document.getElementById('confirmMessage').textContent = message;
       document.getElementById('confirmAccept').textContent = acceptLabel || 'Confirmar';
       overlay.hidden = false;
+      updateOverlayScrollLock();
       const cleanup = function (answer) {
         overlay.hidden = true;
         document.getElementById('confirmAccept').onclick = null;
         document.getElementById('confirmCancel').onclick = null;
+        updateOverlayScrollLock();
         resolve(answer);
       };
       document.getElementById('confirmAccept').onclick = function () { cleanup(true); };
       document.getElementById('confirmCancel').onclick = function () { cleanup(false); };
     });
+  }
+
+  function updateOverlayScrollLock() {
+    const modalOpen = Boolean(document.getElementById('modalRoot').innerHTML.trim());
+    const drawerOpen = Boolean(document.getElementById('drawerRoot').innerHTML.trim());
+    const confirmOpen = !document.getElementById('confirmOverlay').hidden;
+    document.documentElement.classList.toggle('scroll-locked', modalOpen || drawerOpen || confirmOpen);
+    document.body.classList.toggle('scroll-locked', modalOpen || drawerOpen || confirmOpen);
   }
 
   function openSidebar() {

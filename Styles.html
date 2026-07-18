@@ -27,6 +27,7 @@
   * { box-sizing: border-box; }
   html { font-family: Inter, system-ui, sans-serif; color: var(--ink); background: var(--canvas); }
   body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--canvas); }
+  html.scroll-locked, body.scroll-locked { overflow: hidden; overscroll-behavior: none; }
   button, input, select, textarea { font: inherit; }
   button { cursor: pointer; }
   img { max-width: 100%; }
