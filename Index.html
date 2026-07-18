@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="theme-color" content="#0b2f78">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0&display=swap" rel="stylesheet">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <div id="loginView" class="login-view">
+    <section class="login-hero">
+      <div class="hero-orb hero-orb--one"></div>
+      <div class="hero-orb hero-orb--two"></div>
+      <div class="hero-content">
+        <div class="brand-mark brand-mark--large">
+          <span class="material-symbols-rounded">point_of_sale</span>
+        </div>
+        <span class="eyebrow">FACTURACIÓN · INVENTARIO · CONTROL</span>
+        <h1>Gestión inteligente para tu kiosko.</h1>
+        <p>Factura rápido, mantén el stock al día y entiende cada movimiento del negocio desde un solo lugar.</p>
+        <div class="hero-pills">
+          <span><i class="material-symbols-rounded">check_circle</i> Facturación ágil</span>
+          <span><i class="material-symbols-rounded">check_circle</i> Stock en tiempo real</span>
+          <span><i class="material-symbols-rounded">check_circle</i> Reportes claros</span>
+        </div>
+        <div class="hero-preview">
+          <div class="mini-stat"><span>Ventas hoy</span><strong>RD$ 8,420</strong><small>↗ 12.5%</small></div>
+          <div class="mini-chart" aria-hidden="true">
+            <i style="height:38%"></i><i style="height:62%"></i><i style="height:50%"></i>
+            <i style="height:88%"></i><i style="height:70%"></i><i style="height:96%"></i>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="login-panel">
+      <form id="loginForm" class="login-card" autocomplete="on">
+        <div class="login-logo" id="loginLogo">
+          <span class="material-symbols-rounded">storefront</span>
+        </div>
+        <div class="login-heading">
+          <span class="eyebrow">BIENVENIDO</span>
+          <h2>Iniciar sesión</h2>
+          <p>Usa tus credenciales internas de KioskoPOS.</p>
+        </div>
+        <label class="field">
+          <span>Usuario o correo</span>
+          <div class="input-with-icon">
+            <i class="material-symbols-rounded">person</i>
+            <input id="loginIdentifier" name="username" autocomplete="username" required placeholder="ej. admin">
+          </div>
+        </label>
+        <label class="field">
+          <span>Contraseña</span>
+          <div class="input-with-icon">
+            <i class="material-symbols-rounded">lock</i>
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" required placeholder="••••••••">
+            <button class="icon-button input-action" type="button" id="togglePassword" aria-label="Mostrar contraseña">
+              <i class="material-symbols-rounded">visibility</i>
+            </button>
+          </div>
+        </label>
+        <label class="check-line">
+          <input id="rememberSession" type="checkbox">
+          <span>Mantener sesión iniciada</span>
+        </label>
+        <button class="button button--primary button--large button--full" type="submit">
+          <span>Entrar al sistema</span><i class="material-symbols-rounded">login</i>
+        </button>
+        <div id="loginError" class="inline-error" hidden></div>
+        <p class="login-help">¿Necesitas acceso? Contacta a un administrador.</p>
+        <small class="version-label">KioskoPOS v<?= appVersion ?></small>
+      </form>
+    </section>
+  </div>
+
+  <div id="appShell" class="app-shell" hidden>
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark"><span class="material-symbols-rounded">storefront</span></div>
+        <div><strong id="sidebarBusiness">KioskoPOS</strong><small>Retail management</small></div>
+        <button id="closeSidebar" class="icon-button sidebar-close" aria-label="Cerrar menú">
+          <span class="material-symbols-rounded">close</span>
+        </button>
+      </div>
+      <nav id="mainNav" class="main-nav"></nav>
+      <div class="sidebar-footer">
+        <div class="sidebar-user">
+          <span id="sidebarAvatar" class="avatar">A</span>
+          <div><strong id="sidebarUserName">Usuario</strong><small id="sidebarUserRole">Rol</small></div>
+        </div>
+        <button id="logoutButton" class="nav-item nav-item--logout">
+          <span class="material-symbols-rounded">logout</span><span>Salir</span>
+        </button>
+      </div>
+    </aside>
+    <div id="sidebarBackdrop" class="sidebar-backdrop"></div>
+
+    <section class="workspace">
+      <header class="topbar">
+        <button id="openSidebar" class="icon-button mobile-menu" aria-label="Abrir menú">
+          <span class="material-symbols-rounded">menu</span>
+        </button>
+        <div class="topbar-search">
+          <span class="material-symbols-rounded">search</span>
+          <input id="globalSearch" placeholder="Buscar en esta pantalla...">
+          <kbd>Ctrl K</kbd>
+        </div>
+        <div class="topbar-actions">
+          <button class="icon-button notification-button" aria-label="Notificaciones">
+            <span class="material-symbols-rounded">notifications</span><i></i>
+          </button>
+          <div class="topbar-profile">
+            <span id="topbarAvatar" class="avatar avatar--small">A</span>
+            <div><strong id="topbarUserName">Usuario</strong><small id="topbarUserRole">Rol</small></div>
+          </div>
+        </div>
+      </header>
+      <main id="pageContent" class="page-content"></main>
+    </section>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="drawerRoot"></div>
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+  <div id="busyOverlay" class="busy-overlay" hidden>
+    <div class="busy-card"><span class="spinner"></span><strong id="busyText">Procesando...</strong></div>
+  </div>
+  <div id="confirmOverlay" class="modal-overlay" hidden>
+    <div class="confirm-card">
+      <div id="confirmIcon" class="confirm-icon"><span class="material-symbols-rounded">help</span></div>
+      <h3 id="confirmTitle">Confirmar acción</h3>
+      <p id="confirmMessage"></p>
+      <div class="modal-actions">
+        <button id="confirmCancel" class="button button--ghost">Cancelar</button>
+        <button id="confirmAccept" class="button button--danger">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.KIOSKO_BOOT = {
+      version: <?!= JSON.stringify(appVersion || "") ?>,
+      logoDataUrl: <?!= JSON.stringify(logoDataUrl || "") ?>
+    };
+  </script>
+  <?!= include('Scripts'); ?>
+</body>
+</html>

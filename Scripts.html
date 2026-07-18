@@ -1,0 +1,1877 @@
+<script>
+  'use strict';
+
+  const App = {
+    token: localStorage.getItem('kioskopos_token') || '',
+    user: null,
+    config: null,
+    products: [],
+    categories: [],
+    invoices: [],
+    movements: [],
+    users: [],
+    dashboard: null,
+    reports: null,
+    activeReceipt: null,
+    route: 'dashboard',
+    cart: [],
+    paymentMethod: 'Efectivo',
+    discount: 0,
+    received: 0,
+    busyCount: 0,
+    filters: {
+      posQuery: '',
+      posCategory: 'Todos',
+      productQuery: '',
+      productCategory: '',
+      productStatus: '',
+      inventoryQuery: '',
+      inventoryProductId: '',
+      inventoryFrom: '',
+      inventoryTo: '',
+      inventoryType: '',
+      invoiceQuery: '',
+      invoiceFrom: '',
+      invoiceTo: '',
+      invoicePayment: '',
+      invoiceStatus: '',
+      userQuery: '',
+      reportPreset: 'month'
+    }
+  };
+
+  const SEARCHABLE_ROUTES = {
+    pos: true,
+    products: true,
+    inventory: true,
+    sales: true,
+    users: true
+  };
+
+  const NAV_ITEMS = [
+    {id: 'dashboard', label: 'Dashboard', icon: 'dashboard', roles: ['ADMIN']},
+    {id: 'pos', label: 'Facturación POS', icon: 'point_of_sale', roles: ['ADMIN', 'CAJERO']},
+    {id: 'products', label: 'Productos', icon: 'inventory_2', roles: ['ADMIN']},
+    {id: 'inventory', label: 'Inventario', icon: 'warehouse', roles: ['ADMIN']},
+    {id: 'sales', label: 'Facturas / Ventas', icon: 'receipt_long', roles: ['ADMIN', 'CAJERO']},
+    {id: 'users', label: 'Usuarios', icon: 'group', roles: ['ADMIN']},
+    {id: 'reports', label: 'Reportes', icon: 'analytics', roles: ['ADMIN']},
+    {id: 'settings', label: 'Configuración', icon: 'settings', roles: ['ADMIN']}
+  ];
+
+  const CATEGORY_ICONS = {
+    Bebidas: 'local_drink',
+    Snacks: 'fastfood',
+    Comestibles: 'lunch_dining',
+    Dulces: 'cookie',
+    Galletas: 'bakery_dining',
+    Varios: 'shopping_bag',
+    Celulares: 'smartphone',
+    'Artículos': 'category'
+  };
+
+  document.addEventListener('DOMContentLoaded', init);
+
+  function init() {
+    bindShellEvents();
+    applyBootLogo();
+    if (window.top !== window.self && window.innerWidth < 760) {
+      try { window.top.location = window.location.href; } catch (error) {}
+    }
+    if (App.token) {
+      bootstrap();
+    } else {
+      showLogin();
+    }
+  }
+
+  function bindShellEvents() {
+    document.getElementById('loginForm').addEventListener('submit', handleLogin);
+    document.getElementById('togglePassword').addEventListener('click', function () {
+      const input = document.getElementById('loginPassword');
+      const visible = input.type === 'text';
+      input.type = visible ? 'password' : 'text';
+      this.querySelector('i').textContent = visible ? 'visibility' : 'visibility_off';
+    });
+    document.getElementById('logoutButton').addEventListener('click', logout);
+    document.getElementById('openSidebar').addEventListener('click', openSidebar);
+    document.getElementById('closeSidebar').addEventListener('click', closeSidebar);
+    document.getElementById('sidebarBackdrop').addEventListener('click', closeSidebar);
+    document.getElementById('globalSearch').addEventListener('input', handleGlobalSearch);
+    document.addEventListener('keydown', function (event) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        const search = document.getElementById('globalSearch');
+        if (!search.closest('.topbar-search').hidden) search.focus();
+      }
+      if (event.key === 'Escape') {
+        closeModal();
+        closeDrawer();
+        closeSidebar();
+      }
+    });
+  }
+
+  function applyBootLogo() {
+    const logo = window.KIOSKO_BOOT && window.KIOSKO_BOOT.logoDataUrl;
+    if (logo) {
+      document.getElementById('loginLogo').innerHTML = '<img alt="Logo" src="' + logo + '">';
+    }
+  }
+
+  async function handleLogin(event) {
+    event.preventDefault();
+    const errorBox = document.getElementById('loginError');
+    errorBox.hidden = true;
+    setBusy(true, 'Validando acceso...');
+    try {
+      const result = await server('apiLogin', {
+        identifier: document.getElementById('loginIdentifier').value,
+        password: document.getElementById('loginPassword').value,
+        remember: document.getElementById('rememberSession').checked
+      });
+      App.token = result.token;
+      localStorage.setItem('kioskopos_token', result.token);
+      await bootstrap();
+    } catch (error) {
+      errorBox.textContent = error.message;
+      errorBox.hidden = false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function bootstrap() {
+    setBusy(true, 'Preparando KioskoPOS...');
+    try {
+      const data = await server('apiBootstrap', App.token);
+      App.user = data.user;
+      App.config = data.config;
+      App.products = data.products || [];
+      App.categories = data.categories || [];
+      App.invoices = data.invoices || [];
+      App.movements = data.movements || [];
+      App.users = data.users || [];
+      App.dashboard = data.dashboard;
+      App.reports = data.reports;
+      App.paymentMethod = App.config.paymentMethods[0] || 'Efectivo';
+      App.route = App.user.role === 'ADMIN' ? 'dashboard' : 'pos';
+      showApp();
+      renderNav();
+      applyUserData();
+      navigate(App.route);
+    } catch (error) {
+      localStorage.removeItem('kioskopos_token');
+      App.token = '';
+      showLogin();
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function logout() {
+    const token = App.token;
+    localStorage.removeItem('kioskopos_token');
+    App.token = '';
+    App.user = null;
+    App.cart = [];
+    showLogin();
+    if (token) server('apiLogout', token).catch(function () {});
+  }
+
+  function showLogin() {
+    document.getElementById('loginView').hidden = false;
+    document.getElementById('appShell').hidden = true;
+    setTimeout(function () { document.getElementById('loginIdentifier').focus(); }, 80);
+  }
+
+  function showApp() {
+    document.getElementById('loginView').hidden = true;
+    document.getElementById('appShell').hidden = false;
+  }
+
+  function applyUserData() {
+    const initial = (App.user.name || 'U').trim().charAt(0).toUpperCase();
+    document.getElementById('sidebarUserName').textContent = App.user.name;
+    document.getElementById('sidebarUserRole').textContent = roleLabel(App.user.role);
+    document.getElementById('sidebarAvatar').textContent = initial;
+    document.getElementById('topbarUserName').textContent = App.user.name;
+    document.getElementById('topbarUserRole').textContent = roleLabel(App.user.role);
+    document.getElementById('topbarAvatar').textContent = initial;
+    document.getElementById('sidebarBusiness').textContent = App.config.businessName || 'KioskoPOS';
+    document.documentElement.style.setProperty('--primary', App.config.primaryColor || '#0b2f78');
+  }
+
+  function renderNav() {
+    document.getElementById('mainNav').innerHTML = NAV_ITEMS
+      .filter(function (item) { return item.roles.includes(App.user.role); })
+      .map(function (item) {
+        return '<button class="nav-item ' + (item.id === App.route ? 'active' : '') + '" data-route="' + item.id + '">' +
+          icon(item.icon) + '<span>' + item.label + '</span></button>';
+      }).join('');
+    document.querySelectorAll('[data-route]').forEach(function (button) {
+      button.addEventListener('click', function () { navigate(button.dataset.route); });
+    });
+  }
+
+  function navigate(route) {
+    const item = NAV_ITEMS.find(function (nav) { return nav.id === route; });
+    if (!item || !item.roles.includes(App.user.role)) return;
+    App.route = route;
+    document.querySelectorAll('.nav-item[data-route]').forEach(function (button) {
+      button.classList.toggle('active', button.dataset.route === route);
+    });
+    document.getElementById('globalSearch').value = getCurrentSearch();
+    updateGlobalSearchState();
+    renderCurrentPage();
+    closeSidebar();
+    window.scrollTo({top: 0, behavior: 'smooth'});
+  }
+
+  function renderCurrentPage() {
+    const renderers = {
+      dashboard: renderDashboard,
+      pos: renderPos,
+      products: renderProducts,
+      inventory: renderInventory,
+      sales: renderSales,
+      users: renderUsers,
+      reports: renderReports,
+      settings: renderSettings
+    };
+    const content = document.getElementById('pageContent');
+    content.classList.remove('page-enter');
+    renderers[App.route]();
+    requestAnimationFrame(function () { content.classList.add('page-enter'); });
+  }
+
+  function renderDashboard() {
+    const d = App.dashboard || emptyDashboard();
+    const maxSales = Math.max.apply(null, d.dailySales.map(function (item) { return item.total; }).concat([1]));
+    document.getElementById('pageContent').innerHTML =
+      pageHeader('Vista general', 'Resumen operativo del kiosko en tiempo real.',
+        '<button class="button button--success" onclick="navigate(\'pos\')">' + icon('add_shopping_cart') + 'Nueva venta</button>' +
+        '<button class="button button--primary" onclick="openProductModal()">' + icon('add_circle') + 'Agregar producto</button>') +
+      '<section class="metrics-grid">' +
+        metricCard('payments', 'Ventas hoy', money(d.salesToday), 'positive', 'Actualizado al momento') +
+        metricCard('receipt_long', 'Facturas hoy', d.invoiceCountToday, '', 'Comprobantes emitidos') +
+        metricCard('warning', 'Stock bajo', d.lowStockCount, d.lowStockCount ? 'negative' : 'positive', d.lowStockCount ? 'Requiere atención' : 'Todo en orden') +
+        metricCard('workspace_premium', 'Más vendido', escapeHtml(d.topProduct), '', d.topProductUnits + ' unidades') +
+        metricCard('calendar_month', 'Total semana', money(d.weekTotal), 'positive', 'Semana en curso') +
+        metricCard('trophy', 'Cajero destacado', escapeHtml(d.topCashier), '', 'Mayor volumen vendido') +
+      '</section>' +
+      '<section class="quick-actions">' +
+        quickAction('point_of_sale', 'Nueva venta', 'Abrir terminal POS', 'navigate(\'pos\')') +
+        quickAction('add_box', 'Agregar producto', 'Ampliar catálogo', 'openProductModal()') +
+        quickAction('inventory', 'Entrada inventario', 'Registrar mercancía', 'openInventoryModal(\'ENTRADA\')') +
+        quickAction('analytics', 'Ver reportes', 'Analizar resultados', 'navigate(\'reports\')') +
+      '</section>' +
+      '<section class="dashboard-grid">' +
+        '<article class="card"><div class="card-header"><h2 class="section-title">Tendencia de ventas · 7 días</h2><span class="badge badge--info">Semana actual</span></div>' +
+          '<div class="sales-chart">' + d.dailySales.map(function (day) {
+            const height = Math.max(3, Math.round(day.total / maxSales * 88));
+            return '<div class="chart-column"><strong>' + (day.total ? compactMoney(day.total) : '') + '</strong><div class="chart-bar" style="height:' + height + '%"></div><small>' + escapeHtml(day.label) + '</small></div>';
+          }).join('') + '</div></article>' +
+        '<article class="card"><div class="card-header"><h2 class="section-title">Alertas de inventario</h2><span class="badge ' + (d.lowStockCount ? 'badge--danger' : 'badge--success') + '">' + d.lowStockCount + ' alertas</span></div>' +
+          '<div class="card-body alerts-list">' + renderLowStockAlerts(d.lowStock) + '</div></article>' +
+      '</section>' +
+      invoiceTableCard('Últimas facturas', d.latestInvoices, true);
+  }
+
+  function renderPos() {
+    document.getElementById('pageContent').innerHTML =
+      pageHeader('Terminal de ventas', 'Busca productos, arma la factura y cobra sin perder tiempo.',
+        '<span class="badge badge--info">' + icon('person') + escapeHtml(App.user.name) + '</span>') +
+      '<section class="pos-layout">' +
+        '<div class="pos-catalog">' +
+          '<div class="pos-search">' + icon('search') +
+            '<input id="posSearch" value="' + escapeAttr(App.filters.posQuery) + '" placeholder="Buscar por nombre, SKU o código de barras..." autocomplete="off">' +
+            '<kbd>Enter agrega SKU exacto</kbd></div>' +
+          '<div id="categoryTabs" class="category-tabs"></div>' +
+          '<div id="productGrid" class="product-grid"></div>' +
+        '</div>' +
+        '<aside id="cartPanel" class="cart-panel"></aside>' +
+      '</section>';
+    renderCategoryTabs();
+    renderProductGrid();
+    renderCart();
+    const search = document.getElementById('posSearch');
+    search.addEventListener('input', function () {
+      App.filters.posQuery = search.value;
+      document.getElementById('globalSearch').value = search.value;
+      renderProductGrid();
+    });
+    search.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') {
+        const query = search.value.trim().toLowerCase();
+        const exact = App.products.find(function (product) {
+          return isProductSellable(product) &&
+            (product.sku.toLowerCase() === query || String(product.barcode).toLowerCase() === query);
+        });
+        if (exact) {
+          event.preventDefault();
+          addToCart(exact.id);
+          search.select();
+        }
+      }
+    });
+    setTimeout(function () { search.focus(); }, 100);
+  }
+
+  function renderCategoryTabs() {
+    const categories = ['Todos'].concat(App.config.categories || []);
+    document.getElementById('categoryTabs').innerHTML = categories.map(function (category) {
+      return '<button class="category-tab ' + (App.filters.posCategory === category ? 'active' : '') +
+        '" onclick="setPosCategory(\'' + escapeJs(category) + '\')">' + escapeHtml(category) + '</button>';
+    }).join('');
+  }
+
+  function renderProductGrid() {
+    const query = App.filters.posQuery.trim().toLowerCase();
+    const products = App.products.filter(function (product) {
+      const matchesCategory = App.filters.posCategory === 'Todos' || product.category === App.filters.posCategory;
+      const haystack = [product.name, product.sku, product.barcode, product.category, product.searchText].join(' ').toLowerCase();
+      return isProductSellable(product) && matchesCategory && (!query || haystack.includes(query));
+    });
+    document.getElementById('productGrid').innerHTML = products.length ? products.map(productCard).join('') :
+      emptyState('search_off', 'No encontramos productos con esos filtros.');
+  }
+
+  function productCard(product) {
+    const low = product.stock <= product.minimum;
+    const out = product.stock <= 0;
+    const symbol = product.imageUrl
+      ? '<img src="' + product.imageUrl + '" alt="' + escapeAttr(product.name) + '">'
+      : '<span class="product-symbol">' + icon(CATEGORY_ICONS[product.category] || 'inventory_2') + '</span>';
+    return '<article id="product-card-' + product.id + '" class="product-card ' + (out ? 'out' : '') + '">' +
+      '<div class="product-image"><span class="stock-chip ' + (low ? 'low' : '') + '">' + (out ? 'Agotado' : 'Stock: ' + product.stock) + '</span>' + symbol + '</div>' +
+      '<div class="product-info"><small>' + escapeHtml(product.category) + ' · ' + escapeHtml(product.sku || 'Sin SKU') + '</small>' +
+      '<h3 title="' + escapeAttr(product.name) + '">' + escapeHtml(product.name) + '</h3>' +
+      '<div class="product-footer"><span class="product-price">' + money(product.price) + '</span>' +
+      '<button class="add-product" ' + (out ? 'disabled' : '') + ' onclick="addToCart(\'' + product.id + '\')" aria-label="Agregar">' + icon('add') + '</button></div></div></article>';
+  }
+
+  function renderCart() {
+    const subtotal = cartSubtotal();
+    const discount = Math.min(subtotal, Math.max(0, Number(App.discount) || 0));
+    const taxable = subtotal - discount;
+    const tax = App.config.taxEnabled ? roundMoney(taxable * App.config.taxRate / 100) : 0;
+    const total = roundMoney(taxable + tax);
+    const change = App.paymentMethod === 'Efectivo' ? Math.max(0, roundMoney((Number(App.received) || 0) - total)) : 0;
+    const provisionalNumber = App.config.invoicePrefix + '-' + String(App.config.invoiceNext).padStart(6, '0');
+    document.getElementById('cartPanel').innerHTML =
+      '<div class="cart-header"><div><h2>' + icon('shopping_cart') + 'Venta actual <span class="badge badge--info">' + App.cart.length + '</span></h2><small>Factura provisional: ' + escapeHtml(provisionalNumber) + '</small></div>' +
+        '<button class="button button--plain" onclick="clearCart()">Limpiar</button></div>' +
+      '<div class="cart-items">' + (App.cart.length ? App.cart.map(cartItemTemplate).join('') :
+        '<div class="cart-empty">' + icon('shopping_cart_off') + '<strong>El carrito está vacío</strong><small>Agrega un producto para comenzar.</small></div>') + '</div>' +
+      '<div class="cart-body"><p class="payment-label">Método de pago</p><div class="payment-options">' +
+        App.config.paymentMethods.map(function (method) {
+          return '<button class="payment-option ' + (App.paymentMethod === method ? 'active' : '') +
+            '" onclick="selectPayment(\'' + escapeJs(method) + '\')">' + icon(paymentIcon(method)) + '<span>' + escapeHtml(method) + '</span></button>';
+        }).join('') + '</div>' +
+      '<div class="totals-box">' +
+        '<div class="total-line"><span>Subtotal</span><strong id="cartSubtotalValue">' + money(subtotal) + '</strong></div>' +
+        '<div class="total-line"><span>Descuento</span><strong id="cartDiscountValue">− ' + money(discount) + '</strong></div>' +
+        (App.config.taxEnabled ? '<div class="total-line"><span>Impuesto (' + App.config.taxRate + '%)</span><strong id="cartTaxValue">' + money(tax) + '</strong></div>' : '') +
+        '<div class="total-line total"><span>Total</span><strong id="cartTotalValue">' + money(total) + '</strong></div></div>' +
+      '<div class="cart-fields"><label>Descuento<input id="discountInput" type="number" min="0" step="0.01" value="' + App.discount + '" oninput="updateCheckout(\'discount\', this.value)"></label>' +
+        (App.paymentMethod === 'Efectivo'
+          ? '<label>Monto recibido<input id="receivedInput" type="number" min="0" step="0.01" value="' + App.received + '" oninput="updateCheckout(\'received\', this.value)"></label>'
+          : '<label>Monto recibido<div class="change-box">' + money(total) + '</div></label>') +
+        '<label>Cambio<div id="changeBox" class="change-box">' + money(change) + '</div></label></div>' +
+      '<div class="cart-actions"><button class="button button--danger" onclick="clearCart()">' + icon('close') + 'Cancelar</button>' +
+        '<button class="button button--success button--large" ' + (!App.cart.length ? 'disabled' : '') + ' onclick="checkout()">' + icon('receipt_long') + 'Generar factura</button></div></div>';
+  }
+
+  function cartItemTemplate(item) {
+    const product = App.products.find(function (entry) { return entry.id === item.productId; });
+    if (!product) return '';
+    return '<article class="cart-item"><div><h4>' + escapeHtml(product.name) + '</h4><small>' + money(product.price) + ' × ' + item.quantity + '</small></div>' +
+      '<strong>' + money(product.price * item.quantity) + '</strong><div class="cart-item-controls">' +
+      '<div class="quantity-control"><button onclick="changeCartQuantity(\'' + product.id + '\', -1)">−</button><b>' + item.quantity + '</b><button onclick="changeCartQuantity(\'' + product.id + '\', 1)">+</button></div>' +
+      '<button class="icon-button" onclick="removeFromCart(\'' + product.id + '\')" aria-label="Eliminar">' + icon('delete') + '</button></div></article>';
+  }
+
+  function setPosCategory(category) {
+    App.filters.posCategory = category;
+    renderCategoryTabs();
+    renderProductGrid();
+  }
+
+  function addToCart(productId) {
+    const product = App.products.find(function (item) { return item.id === productId; });
+    if (!product || product.stock <= 0 || !isProductSellable(product)) return;
+    const current = App.cart.find(function (item) { return item.productId === productId; });
+    if (current && current.quantity >= product.stock) {
+      showToast('No hay más unidades disponibles de ' + product.name + '.', 'warning');
+      return;
+    }
+    if (current) current.quantity += 1;
+    else App.cart.push({productId: productId, quantity: 1});
+    const card = document.getElementById('product-card-' + productId);
+    if (card) {
+      card.classList.remove('bump');
+      requestAnimationFrame(function () { card.classList.add('bump'); });
+    }
+    renderCart();
+  }
+
+  function isProductSellable(product) {
+    return Boolean(product) && product.status === 'ACTIVO' && App.categories.some(function (category) {
+      return String(category.id) === String(product.categoryId) && category.status === 'ACTIVO';
+    });
+  }
+
+  function changeCartQuantity(productId, delta) {
+    const item = App.cart.find(function (entry) { return entry.productId === productId; });
+    const product = App.products.find(function (entry) { return entry.id === productId; });
+    if (!item || !product) return;
+    const next = item.quantity + delta;
+    if (next <= 0) return removeFromCart(productId);
+    if (next > product.stock) return showToast('Stock máximo disponible: ' + product.stock, 'warning');
+    item.quantity = next;
+    renderCart();
+  }
+
+  function removeFromCart(productId) {
+    App.cart = App.cart.filter(function (item) { return item.productId !== productId; });
+    renderCart();
+  }
+
+  async function clearCart() {
+    if (!App.cart.length) return;
+    const accepted = await confirmAction('Cancelar venta', 'Se eliminarán todos los productos de la venta actual.', 'Sí, cancelar');
+    if (!accepted) return;
+    App.cart = [];
+    App.discount = 0;
+    App.received = 0;
+    renderCart();
+  }
+
+  function selectPayment(method) {
+    App.paymentMethod = method;
+    if (method !== 'Efectivo') App.received = cartTotal();
+    renderCart();
+  }
+
+  function updateCheckout(field, value) {
+    if (field === 'discount') App.discount = Math.max(0, Number(value) || 0);
+    if (field === 'received') App.received = Math.max(0, Number(value) || 0);
+    const subtotal = cartSubtotal();
+    const discount = Math.min(subtotal, App.discount);
+    const taxable = subtotal - discount;
+    const tax = App.config.taxEnabled ? roundMoney(taxable * App.config.taxRate / 100) : 0;
+    const total = roundMoney(taxable + tax);
+    const change = Math.max(0, roundMoney(App.received - total));
+    const subtotalValue = document.getElementById('cartSubtotalValue');
+    const discountValue = document.getElementById('cartDiscountValue');
+    const taxValue = document.getElementById('cartTaxValue');
+    const totalValue = document.getElementById('cartTotalValue');
+    const changeBox = document.getElementById('changeBox');
+    if (subtotalValue) subtotalValue.textContent = money(subtotal);
+    if (discountValue) discountValue.textContent = '− ' + money(discount);
+    if (taxValue) taxValue.textContent = money(tax);
+    if (totalValue) totalValue.textContent = money(total);
+    if (changeBox) changeBox.textContent = money(change);
+  }
+
+  function cartSubtotal() {
+    return roundMoney(App.cart.reduce(function (sum, item) {
+      const product = App.products.find(function (entry) { return entry.id === item.productId; });
+      return sum + (product ? product.price * item.quantity : 0);
+    }, 0));
+  }
+
+  function cartTotal() {
+    const subtotal = cartSubtotal();
+    const taxable = Math.max(0, subtotal - Math.min(subtotal, App.discount));
+    return roundMoney(taxable + (App.config.taxEnabled ? taxable * App.config.taxRate / 100 : 0));
+  }
+
+  async function checkout() {
+    if (!App.cart.length) return;
+    const total = cartTotal();
+    if (App.paymentMethod === 'Efectivo' && App.received < total) {
+      showToast('El monto recibido debe cubrir el total de la venta.', 'warning');
+      return;
+    }
+    setBusy(true, 'Generando factura...');
+    try {
+      const result = await server('apiCreateSale', App.token, {
+        items: App.cart,
+        discount: App.discount,
+        paymentMethod: App.paymentMethod,
+        received: App.received
+      });
+      App.products = result.products;
+      App.dashboard = result.dashboard;
+      App.invoices.unshift(invoiceSummaryFromDetail(result.invoice));
+      App.config.invoiceNext += 1;
+      App.cart = [];
+      App.discount = 0;
+      App.received = 0;
+      showReceipt(result.invoice, true);
+      showToast('Factura guardada e inventario actualizado.');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderProducts() {
+    const filtered = filteredProducts();
+    const active = App.products.filter(function (p) { return p.status === 'ACTIVO'; });
+    const low = active.filter(function (p) { return p.stock <= p.minimum; });
+    document.getElementById('pageContent').innerHTML =
+      pageHeader('Gestión de productos', 'Controla catálogo, precios, costos y niveles mínimos.',
+        '<button class="button button--outline" onclick="openCategoryManager()">' + icon('category') + 'Categorías</button>' +
+        '<button class="button button--primary button--large" onclick="openProductModal()">' + icon('add_circle') + 'Nuevo producto</button>') +
+      '<section class="summary-grid">' +
+        summaryCard('inventory_2', 'Total productos', App.products.length) +
+        summaryCard('check_circle', 'Activos', active.length) +
+        summaryCard('warning', 'Stock bajo', low.length) +
+        summaryCard('category', 'Categorías activas', App.categories.filter(function (category) { return category.status === 'ACTIVO'; }).length) +
+      '</section>' +
+      '<div class="filters-bar">' + icon('filter_alt') +
+        '<select id="productCategoryFilter"><option value="">Todas las categorías</option>' +
+          App.categories.map(function (category) { return '<option ' + (App.filters.productCategory === category.name ? 'selected' : '') + '>' + escapeHtml(category.name) + '</option>'; }).join('') + '</select>' +
+        '<select id="productStatusFilter"><option value="">Todos los estados</option><option value="ACTIVO" ' + (App.filters.productStatus === 'ACTIVO' ? 'selected' : '') + '>Activo</option><option value="INACTIVO" ' + (App.filters.productStatus === 'INACTIVO' ? 'selected' : '') + '>Inactivo</option></select>' +
+        '<div class="filters-spacer"></div><span class="badge badge--info">' + filtered.length + ' resultados</span></div>' +
+      '<article class="card table-card"><div class="table-wrap"><table><thead><tr><th>SKU / Código</th><th>Producto</th><th>Categoría</th><th>Precio</th><th>Costo</th><th>Stock</th><th>Estado</th><th>Acciones</th></tr></thead>' +
+        '<tbody>' + (filtered.length ? filtered.map(productRow).join('') : '<tr><td colspan="8">' + emptyState('inventory_2', 'No hay productos para mostrar.') + '</td></tr>') + '</tbody></table></div></article>';
+    document.getElementById('productCategoryFilter').addEventListener('change', function () {
+      App.filters.productCategory = this.value; renderProducts();
+    });
+    document.getElementById('productStatusFilter').addEventListener('change', function () {
+      App.filters.productStatus = this.value; renderProducts();
+    });
+  }
+
+  function filteredProducts() {
+    const query = App.filters.productQuery.trim().toLowerCase();
+    return App.products.filter(function (p) {
+      return (!query || [p.name, p.sku, p.barcode, p.category, p.searchText].join(' ').toLowerCase().includes(query)) &&
+        (!App.filters.productCategory || p.category === App.filters.productCategory) &&
+        (!App.filters.productStatus || p.status === App.filters.productStatus);
+    });
+  }
+
+  function productRow(product) {
+    const low = product.stock <= product.minimum;
+    const details = (product.attributes || []).filter(function (attribute) { return attribute.value; }).slice(0, 3)
+      .map(function (attribute) { return attribute.label + ': ' + attribute.value; }).join(' · ');
+    return '<tr><td class="table-primary">' + escapeHtml(product.sku || 'Sin SKU') + '<br><small>' + escapeHtml(product.barcode || 'Sin código de barras') + '</small></td>' +
+      '<td><div class="table-product"><span class="product-symbol">' + icon(CATEGORY_ICONS[product.category] || 'inventory_2') + '</span><div><strong>' + escapeHtml(product.name) + '</strong><small>' + escapeHtml(details || ('Mínimo: ' + product.minimum)) + '</small></div></div></td>' +
+      '<td>' + escapeHtml(product.category) + '</td><td><strong>' + money(product.price) + '</strong></td><td>' + money(product.cost) + '</td>' +
+      '<td><span class="badge ' + (low ? 'badge--danger' : 'badge--success') + '">' + product.stock + ' unid.</span></td>' +
+      '<td>' + statusBadge(product.status) + '</td><td><div class="table-actions">' +
+        '<button class="icon-button" title="Editar" onclick="openProductModal(\'' + product.id + '\')">' + icon('edit') + '</button>' +
+        '<button class="icon-button" title="Movimientos" onclick="navigateProductMovements(\'' + product.id + '\')">' + icon('swap_vert') + '</button></div></td></tr>';
+  }
+
+  function openProductModal(productId) {
+    if (!App.user || App.user.role !== 'ADMIN') return;
+    const activeCategories = App.categories.filter(function (category) { return category.status === 'ACTIVO'; });
+    const product = App.products.find(function (item) { return item.id === productId; }) || {
+      id: '', sku: '', barcode: '', name: '', manualName: '',
+      categoryId: activeCategories.length ? activeCategories[0].id : '',
+      price: '', cost: '', stock: 0, minimum: 5, imageFileId: '', status: 'ACTIVO', attributes: []
+    };
+    const categoryOptions = App.categories.filter(function (category) {
+      return category.status === 'ACTIVO' || category.id === product.categoryId;
+    }).map(function (category) {
+      return {value: category.id, label: category.name + (category.status === 'INACTIVO' ? ' · Inactiva' : '')};
+    });
+    openModal(
+      '<div class="modal-header"><h3>' + (product.id ? 'Editar producto' : 'Nuevo producto') + '</h3><button class="icon-button" onclick="closeModal()">' + icon('close') + '</button></div>' +
+      '<form id="productForm"><div class="modal-body form-grid">' +
+        hiddenInput('id', product.id) +
+        '<div id="productNamingNote" class="form-note form-note--info field--full"></div>' +
+        fieldInput('name', 'Nombre del producto (opcional)', product.manualName || '', 'Ej. Galaxy A55') +
+        fieldSelectObjects('categoryId', 'Categoría', categoryOptions, product.categoryId) +
+        fieldInput('sku', 'Código / SKU (opcional)', product.sku, 'Ej. CEL-001') +
+        fieldInput('barcode', 'Código de barras (opcional)', product.barcode, 'Opcional') +
+        fieldInput('price', 'Precio de venta', product.price, '0.00', true, 'number', '0.01') +
+        fieldInput('cost', 'Costo', product.cost, '0.00', true, 'number', '0.01') +
+        (!product.id ? fieldInput('stock', 'Stock inicial', product.stock, '0', true, 'number', '1') : '') +
+        fieldInput('minimum', 'Stock mínimo', product.minimum, '5', true, 'number', '1') +
+        fieldInput('imageFileId', 'ID de imagen en Drive', product.imageFileId, 'Opcional', false, 'text', '', 'field--full') +
+        fieldSelect('status', 'Estado', ['ACTIVO', 'INACTIVO'], product.status) +
+        '<section id="dynamicProductFields" class="dynamic-product-fields field--full"></section>' +
+      '</div><div class="modal-actions"><button type="button" class="button button--ghost" onclick="closeModal()">Cancelar</button><button class="button button--primary" type="submit">' + icon('save') + 'Guardar producto</button></div></form>',
+      'wide'
+    );
+    const categorySelect = document.querySelector('#productForm [name="categoryId"]');
+    categorySelect.addEventListener('change', function () {
+      renderDynamicProductFields(this.value, product);
+    });
+    renderDynamicProductFields(product.categoryId, product);
+    document.getElementById('productForm').addEventListener('submit', saveProduct);
+  }
+
+  function renderDynamicProductFields(categoryId, product) {
+    const container = document.getElementById('dynamicProductFields');
+    const category = App.categories.find(function (item) { return item.id === categoryId; });
+    if (!container || !category) return;
+    const canGenerateName = category.fields.some(function (field) { return field.key === 'marca'; }) &&
+      category.fields.some(function (field) { return field.key === 'modelo'; });
+    const nameInput = document.querySelector('#productForm [name="name"]');
+    const nameLabel = nameInput.closest('.field').querySelector('span');
+    nameInput.required = !canGenerateName;
+    nameLabel.textContent = canGenerateName ? 'Nombre del producto (opcional)' : 'Nombre del producto *';
+    document.getElementById('productNamingNote').innerHTML = icon('info') + '<span>' + (canGenerateName
+      ? 'Puedes indicar un nombre o dejarlo vacío para generarlo automáticamente con <strong>Marca y Modelo</strong>. SKU y código de barras son opcionales.'
+      : 'Esta categoría no genera el nombre automáticamente. Indica un <strong>nombre de producto</strong>; SKU y código de barras siguen siendo opcionales.') + '</span>';
+    const stored = {};
+    (product.attributes || []).forEach(function (attribute) { stored[attribute.fieldId] = attribute.value; });
+    container.innerHTML = '<div class="dynamic-fields-heading"><div><span class="eyebrow">CARACTERÍSTICAS DE ' + escapeHtml(category.name.toUpperCase()) + '</span><h4>Detalles adicionales</h4></div><span class="badge badge--info">' + category.fields.length + ' campos</span></div>' +
+      (category.fields.length ? '<div class="form-grid">' + category.fields.map(function (field) {
+        return dynamicProductField(field, stored[field.id] || '');
+      }).join('') + '</div>' : '<div class="empty-inline">Esta categoría no requiere detalles adicionales.</div>');
+  }
+
+  function dynamicProductField(field, value) {
+    const required = field.required ? ' required' : '';
+    const label = escapeHtml(field.label) + (field.required ? ' *' : '');
+    if (field.type === 'TEXTAREA') {
+      return '<label class="field field--full"><span>' + label + '</span><textarea data-attribute-id="' + field.id + '"' + required + '>' + escapeHtml(value) + '</textarea></label>';
+    }
+    if (field.type === 'SELECT') {
+      return '<label class="field"><span>' + label + '</span><select data-attribute-id="' + field.id + '"' + required + '><option value="">Seleccione...</option>' +
+        field.options.map(function (option) { return '<option ' + (String(option) === String(value) ? 'selected' : '') + '>' + escapeHtml(option) + '</option>'; }).join('') + '</select></label>';
+    }
+    const type = field.type === 'NUMBER' ? 'number' : field.type === 'DATE' ? 'date' : 'text';
+    return '<label class="field"><span>' + label + '</span><input data-attribute-id="' + field.id + '" type="' + type + '" value="' + escapeAttr(value) + '"' + required + '></label>';
+  }
+
+  async function saveProduct(event) {
+    event.preventDefault();
+    const payload = formObject(event.currentTarget);
+    payload.attributes = {};
+    event.currentTarget.querySelectorAll('[data-attribute-id]').forEach(function (input) {
+      payload.attributes[input.dataset.attributeId] = input.value;
+    });
+    setBusy(true, 'Guardando producto...');
+    try {
+      const result = await server('apiSaveProduct', App.token, payload);
+      App.products = result.products;
+      closeModal();
+      renderProducts();
+      showToast('Producto guardado correctamente.');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openCategoryManager() {
+    openModal(
+      '<div class="modal-header"><div><h3>Categorías de productos</h3><small>Define qué información recoge cada tipo de producto.</small></div><button class="icon-button" onclick="closeModal()">' + icon('close') + '</button></div>' +
+      '<div class="modal-body"><div class="category-manager-toolbar"><div><strong>' + App.categories.length + ' categorías configuradas</strong><small>Los campos básicos permanecen disponibles en todas.</small></div><button class="button button--primary" onclick="openCategoryEditor()">' + icon('add') + 'Nueva categoría</button></div>' +
+      '<div class="category-manager-list">' + App.categories.map(categoryManagerCard).join('') + '</div></div>' +
+      '<div class="modal-actions"><button class="button button--ghost" onclick="closeModal()">Cerrar</button></div>',
+      'wide'
+    );
+  }
+
+  function categoryManagerCard(category) {
+    const requiredCount = category.fields.filter(function (field) { return field.required; }).length;
+    return '<article class="category-manager-card"><div class="category-manager-icon">' + icon(CATEGORY_ICONS[category.name] || 'category') + '</div><div class="category-manager-info"><div><h4>' + escapeHtml(category.name) + '</h4>' + statusBadge(category.status) + '</div><p>' + escapeHtml(category.description || 'Sin descripción.') + '</p><div class="category-field-chips">' +
+      (category.fields.length ? category.fields.slice(0, 6).map(function (field) {
+        return '<span>' + escapeHtml(field.label) + (field.required ? ' *' : '') + '</span>';
+      }).join('') : '<span>Solo campos básicos</span>') +
+      (category.fields.length > 6 ? '<span>+' + (category.fields.length - 6) + ' más</span>' : '') + '</div><small>' + category.fields.length + ' adicionales · ' + requiredCount + ' obligatorios</small></div>' +
+      '<button class="button button--outline" onclick="openCategoryEditor(\'' + category.id + '\')">' + icon('edit') + 'Editar</button></article>';
+  }
+
+  function openCategoryEditor(categoryId) {
+    const category = App.categories.find(function (item) { return item.id === categoryId; }) || {
+      id: '', name: '', description: '', status: 'ACTIVO', fields: []
+    };
+    openModal(
+      '<div class="modal-header"><div><h3>' + (category.id ? 'Editar categoría' : 'Nueva categoría') + '</h3><small>Configura los detalles que tendrá cada producto.</small></div><button class="icon-button" onclick="openCategoryManager()">' + icon('arrow_back') + '</button></div>' +
+      '<form id="categoryForm"><div class="modal-body">' + hiddenInput('id', category.id) +
+        '<div class="form-grid">' +
+          fieldInput('name', 'Nombre de la categoría', category.name, 'Ej. Accesorios', true) +
+          fieldSelect('status', 'Estado', ['ACTIVO', 'INACTIVO'], category.status) +
+          '<label class="field field--full"><span>Descripción</span><textarea name="description" placeholder="Explica brevemente qué productos agrupa.">' + escapeHtml(category.description) + '</textarea></label>' +
+        '</div><section class="basic-fields-panel"><div><span class="eyebrow">CAMPOS BÁSICOS</span><h4>Incluidos automáticamente</h4><p>No se pueden quitar. Nombre, SKU y código de barras son opcionales; precio, costo, stock y estado forman parte del registro base.</p></div><div class="category-field-chips"><span>Nombre</span><span>SKU</span><span>Código de barras</span><span>Precio</span><span>Costo</span><span>Stock</span><span>Stock mínimo</span><span>Imagen</span><span>Estado</span></div></section>' +
+        '<section class="category-fields-editor"><div class="dynamic-fields-heading"><div><span class="eyebrow">CAMPOS ADICIONALES</span><h4>Características de la categoría</h4></div><button type="button" class="button button--ghost" onclick="addCategoryFieldRow()">' + icon('add') + 'Agregar característica</button></div><div id="categoryFieldRows"></div></section>' +
+      '</div><div class="modal-actions"><button type="button" class="button button--ghost" onclick="openCategoryManager()">Cancelar</button><button class="button button--primary" type="submit">' + icon('save') + 'Guardar categoría</button></div></form>',
+      'wide'
+    );
+    category.fields.forEach(function (field) { addCategoryFieldRow(field); });
+    document.getElementById('categoryForm').addEventListener('submit', saveCategory);
+  }
+
+  function addCategoryFieldRow(field) {
+    field = field || {id: '', key: '', label: '', type: 'TEXT', required: false, options: []};
+    const container = document.getElementById('categoryFieldRows');
+    if (!container) return;
+    const row = document.createElement('div');
+    row.className = 'category-field-row';
+    row.dataset.fieldId = field.id || '';
+    row.dataset.fieldKey = field.key || '';
+    row.innerHTML = '<div class="field-row-handle">' + icon('drag_indicator') + '</div>' +
+      '<label class="field"><span>Nombre del campo</span><input data-field-label value="' + escapeAttr(field.label || '') + '" placeholder="Ej. Material" required></label>' +
+      '<label class="field"><span>Tipo de dato</span><select data-field-type onchange="toggleCategoryFieldOptions(this)">' +
+        categoryFieldTypeOptions(field.type) + '</select></label>' +
+      '<label class="field category-options-field ' + (field.type === 'SELECT' ? '' : 'is-hidden') + '"><span>Opciones</span><input data-field-options value="' + escapeAttr((field.options || []).join(', ')) + '" placeholder="Opción 1, Opción 2"></label>' +
+      '<label class="required-toggle"><input data-field-required type="checkbox" ' + (field.required ? 'checked' : '') + '><span>Obligatorio</span></label>' +
+      '<button type="button" class="icon-button field-remove" title="Quitar característica" onclick="removeCategoryField(this)">' + icon('delete') + '</button>';
+    container.appendChild(row);
+  }
+
+  function categoryFieldTypeOptions(selected) {
+    const types = [
+      {value: 'TEXT', label: 'Texto corto'},
+      {value: 'TEXTAREA', label: 'Texto largo'},
+      {value: 'NUMBER', label: 'Número'},
+      {value: 'SELECT', label: 'Lista de opciones'},
+      {value: 'DATE', label: 'Fecha'}
+    ];
+    return types.map(function (type) {
+      return '<option value="' + type.value + '" ' + (type.value === selected ? 'selected' : '') + '>' + type.label + '</option>';
+    }).join('');
+  }
+
+  function toggleCategoryFieldOptions(select) {
+    const row = select.closest('.category-field-row');
+    row.querySelector('.category-options-field').classList.toggle('is-hidden', select.value !== 'SELECT');
+  }
+
+  function removeCategoryField(button) {
+    button.closest('.category-field-row').remove();
+  }
+
+  async function saveCategory(event) {
+    event.preventDefault();
+    const payload = formObject(event.currentTarget);
+    payload.fields = Array.from(document.querySelectorAll('#categoryFieldRows .category-field-row')).map(function (row) {
+      return {
+        id: row.dataset.fieldId,
+        key: row.dataset.fieldKey,
+        label: row.querySelector('[data-field-label]').value,
+        type: row.querySelector('[data-field-type]').value,
+        required: row.querySelector('[data-field-required]').checked,
+        options: row.querySelector('[data-field-options]').value
+      };
+    });
+    setBusy(true, 'Guardando categoría...');
+    try {
+      const result = await server('apiSaveCategory', App.token, payload);
+      App.categories = result.categories;
+      App.config = result.config;
+      App.products = result.products;
+      if (App.route === 'products') renderProducts();
+      openCategoryManager();
+      showToast('Categoría y características guardadas correctamente.');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderInventory() {
+    const active = App.products.filter(function (p) { return p.status === 'ACTIVO'; });
+    const selected = App.products.find(function (product) { return product.id === App.filters.inventoryProductId; }) || null;
+    const scopedProducts = selected ? [selected] : active;
+    const visibleMovements = filterMovementsClient();
+    const totalUnits = scopedProducts.reduce(function (sum, p) { return sum + p.stock; }, 0);
+    const inventoryValue = scopedProducts.reduce(function (sum, p) { return sum + p.stock * p.cost; }, 0);
+    const low = active.filter(function (p) { return p.stock <= p.minimum; }).sort(function (a, b) { return a.stock - b.stock; });
+    document.getElementById('pageContent').innerHTML =
+      pageHeader(selected ? 'Movimientos de ' + selected.name : 'Inventario y movimientos', selected
+        ? 'Historial filtrado del producto seleccionado.'
+        : 'Entradas, salidas y ventas con trazabilidad completa.',
+        '<button class="button button--success" onclick="openInventoryModal(\'ENTRADA\', \'' + (selected ? selected.id : '') + '\')">' + icon('add_box') + 'Entrada</button>' +
+        '<button class="button button--primary" onclick="openInventoryModal(\'SALIDA\', \'' + (selected ? selected.id : '') + '\')">' + icon('outbox') + 'Salida</button>') +
+      '<section class="summary-grid">' +
+        summaryCard('inventory', selected ? 'Stock actual' : 'Unidades disponibles', totalUnits) +
+        summaryCard('paid', 'Valor a costo', money(inventoryValue)) +
+        summaryCard('warning', selected ? 'Stock mínimo' : 'Productos bajos', selected ? selected.minimum : low.length) +
+        summaryCard('swap_vert', 'Movimientos visibles', visibleMovements.length) +
+      '</section>' +
+      '<div class="filters-bar inventory-filters">' + icon('filter_alt') +
+        '<select id="inventoryProductFilter"><option value="">Vista general · Todos los productos</option>' +
+          App.products.map(function (product) { return '<option value="' + product.id + '" ' + (selected && selected.id === product.id ? 'selected' : '') + '>' + escapeHtml(product.name) + '</option>'; }).join('') + '</select>' +
+        '<label class="compact-date-field"><span>Desde</span><input id="inventoryFrom" type="date" value="' + escapeAttr(App.filters.inventoryFrom) + '"></label>' +
+        '<label class="compact-date-field"><span>Hasta</span><input id="inventoryTo" type="date" value="' + escapeAttr(App.filters.inventoryTo) + '"></label>' +
+        '<select id="inventoryType"><option value="">Todos los tipos</option>' + ['ENTRADA', 'SALIDA', 'VENTA', 'ANULACION'].map(function (type) {
+          return '<option value="' + type + '" ' + (App.filters.inventoryType === type ? 'selected' : '') + '>' + type + '</option>';
+        }).join('') + '</select><div class="filters-spacer"></div>' +
+        '<button class="button button--outline" onclick="refreshInventoryMovements()">' + icon('search') + 'Aplicar</button>' +
+        '<button class="button button--plain" onclick="clearInventoryFilters()">Limpiar</button></div>' +
+      '<section class="inventory-layout">' +
+        '<article class="card table-card"><div class="card-header"><h2 class="section-title">' + (selected ? 'Historial del producto' : 'Movimientos de inventario') + '</h2><span class="badge badge--info">' + visibleMovements.length + ' registros</span></div><div class="table-wrap">' +
+          '<table><thead><tr><th>Fecha</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Comentario</th><th>Usuario</th><th>Antes → Después</th></tr></thead><tbody>' +
+          (visibleMovements.length ? visibleMovements.map(movementRow).join('') : '<tr><td colspan="7">' + emptyState('swap_vert', 'Todavía no hay movimientos con esos filtros.') + '</td></tr>') +
+          '</tbody></table></div></article>' +
+        inventorySidePanel(selected, low) + '</section>';
+    ['inventoryProductFilter', 'inventoryFrom', 'inventoryTo', 'inventoryType'].forEach(function (id) {
+      document.getElementById(id).addEventListener('change', function () {
+        const keys = {
+          inventoryProductFilter: 'inventoryProductId', inventoryFrom: 'inventoryFrom',
+          inventoryTo: 'inventoryTo', inventoryType: 'inventoryType'
+        };
+        App.filters[keys[id]] = this.value;
+      });
+    });
+  }
+
+  function filterMovementsClient() {
+    const query = App.filters.inventoryQuery.trim().toLowerCase();
+    if (!query) return App.movements;
+    return App.movements.filter(function (movement) {
+      return [
+        movement.product, movement.sku, movement.type, movement.comment,
+        movement.user, movement.invoiceId
+      ].join(' ').toLowerCase().includes(query);
+    });
+  }
+
+  function inventorySidePanel(selected, low) {
+    if (!selected) {
+      return '<aside class="card low-stock-panel"><div class="card-header" style="padding:0 0 15px;border:0"><h2 class="section-title">Stock bajo</h2><span class="badge badge--danger">' + low.length + '</span></div><div class="alerts-list">' + renderLowStockAlerts(low.slice(0, 10)) + '</div></aside>';
+    }
+    const attributes = (selected.attributes || []).filter(function (attribute) { return attribute.value; });
+    return '<aside class="card product-inventory-detail"><div class="card-header"><h2 class="section-title">Detalle del producto</h2>' + statusBadge(selected.status) + '</div><div class="card-body"><div class="product-detail-hero"><span class="product-symbol">' + icon(CATEGORY_ICONS[selected.category] || 'inventory_2') + '</span><div><strong>' + escapeHtml(selected.name) + '</strong><small>' + escapeHtml(selected.category) + '</small></div></div><dl class="product-detail-list"><div><dt>SKU</dt><dd>' + escapeHtml(selected.sku || 'No definido') + '</dd></div><div><dt>Stock</dt><dd>' + selected.stock + '</dd></div><div><dt>Mínimo</dt><dd>' + selected.minimum + '</dd></div>' +
+      attributes.map(function (attribute) { return '<div><dt>' + escapeHtml(attribute.label) + '</dt><dd>' + escapeHtml(attribute.value) + '</dd></div>'; }).join('') +
+      '</dl><button class="button button--ghost button--full" onclick="clearInventoryFilters()">' + icon('arrow_back') + 'Volver a vista general</button></div></aside>';
+  }
+
+  async function refreshInventoryMovements() {
+    if (App.filters.inventoryFrom && App.filters.inventoryTo && App.filters.inventoryFrom > App.filters.inventoryTo) {
+      showToast('La fecha Desde no puede ser posterior a Hasta.', 'warning');
+      return;
+    }
+    setBusy(true, 'Filtrando movimientos...');
+    try {
+      App.movements = await server('apiListMovements', App.token, {
+        productId: App.filters.inventoryProductId,
+        from: App.filters.inventoryFrom,
+        to: App.filters.inventoryTo,
+        type: App.filters.inventoryType,
+        limit: 1000
+      });
+      if (App.route === 'inventory') renderInventory();
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearInventoryFilters() {
+    App.filters.inventoryQuery = '';
+    App.filters.inventoryProductId = '';
+    App.filters.inventoryFrom = '';
+    App.filters.inventoryTo = '';
+    App.filters.inventoryType = '';
+    document.getElementById('globalSearch').value = '';
+    await refreshInventoryMovements();
+  }
+
+  function movementRow(movement) {
+    const badgeClass = movement.type === 'ENTRADA' || movement.type === 'ANULACION' ? 'badge--success' :
+      movement.type === 'VENTA' ? 'badge--info' : 'badge--danger';
+    return '<tr><td>' + dateTime(movement.date) + '</td><td><strong>' + escapeHtml(movement.product) + '</strong><br><small>' + escapeHtml(movement.sku) + '</small></td>' +
+      '<td><span class="badge ' + badgeClass + '">' + escapeHtml(movement.type) + '</span></td>' +
+      '<td><strong>' + (movement.quantity > 0 ? '+' : '') + movement.quantity + '</strong></td>' +
+      '<td title="' + escapeAttr(movement.comment) + '">' + escapeHtml(truncate(movement.comment, 48)) + '</td><td>' + escapeHtml(movement.user) + '</td>' +
+      '<td>' + movement.stockBefore + ' → <strong>' + movement.stockAfter + '</strong></td></tr>';
+  }
+
+  function openInventoryModal(type, productId) {
+    if (!App.user || App.user.role !== 'ADMIN') return;
+    const productOptions = App.products.filter(function (p) { return p.status === 'ACTIVO'; }).map(function (p) {
+      return {value: p.id, label: p.name + ' · Stock ' + p.stock};
+    });
+    openModal(
+      '<div class="modal-header"><h3>' + (type === 'ENTRADA' ? 'Entrada de inventario' : 'Salida de inventario') + '</h3><button class="icon-button" onclick="closeModal()">' + icon('close') + '</button></div>' +
+      '<form id="inventoryForm"><div class="modal-body form-grid">' +
+        hiddenInput('type', type) +
+        fieldSelectObjects('productId', 'Producto', productOptions, productId || '', 'field--full') +
+        fieldInput('quantity', 'Cantidad', 1, '1', true, 'number', '1') +
+        '<label class="field"><span>Tipo de movimiento</span><div class="change-box">' + escapeHtml(type) + '</div></label>' +
+        '<label class="field field--full"><span>Comentario obligatorio</span><textarea name="comment" required placeholder="' + (type === 'ENTRADA' ? 'Ej. Compra semanal al distribuidor' : 'Ej. Producto vencido o consumo interno') + '"></textarea></label>' +
+      '</div><div class="modal-actions"><button type="button" class="button button--ghost" onclick="closeModal()">Cancelar</button><button class="button ' + (type === 'ENTRADA' ? 'button--success' : 'button--danger') + '" type="submit">' + icon(type === 'ENTRADA' ? 'add_box' : 'outbox') + 'Registrar ' + type.toLowerCase() + '</button></div></form>'
+    );
+    document.getElementById('inventoryForm').addEventListener('submit', saveInventoryMovement);
+  }
+
+  async function saveInventoryMovement(event) {
+    event.preventDefault();
+    const payload = formObject(event.currentTarget);
+    const accepted = await confirmAction(
+      'Confirmar ' + payload.type.toLowerCase(),
+      'Se actualizará el stock y quedará un registro permanente del movimiento.',
+      'Registrar'
+    );
+    if (!accepted) return;
+    setBusy(true, 'Actualizando inventario...');
+    try {
+      const result = await server('apiInventoryMovement', App.token, payload);
+      App.products = result.products;
+      closeModal();
+      await refreshInventoryMovements();
+      showToast('Movimiento registrado correctamente.');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderSales() {
+    const filtered = filterInvoicesClient();
+    const paid = filtered.filter(function (invoice) { return invoice.status === 'PAGADA'; });
+    const total = paid.reduce(function (sum, invoice) { return sum + invoice.total; }, 0);
+    document.getElementById('pageContent').innerHTML =
+      pageHeader('Facturas y ventas', 'Consulta, imprime y da seguimiento a los comprobantes emitidos.') +
+      '<section class="summary-grid">' +
+        summaryCard('payments', 'Total vendido', money(total)) +
+        summaryCard('receipt_long', 'Facturas', filtered.length) +
+        summaryCard('shopping_cart', 'Ticket promedio', money(paid.length ? total / paid.length : 0)) +
+        summaryCard('cancel', 'Anuladas', filtered.filter(function (i) { return i.status === 'ANULADA'; }).length) +
+      '</section>' +
+      '<div class="filters-bar">' +
+        '<input id="invoiceFrom" type="date" value="' + escapeAttr(App.filters.invoiceFrom) + '" aria-label="Desde">' +
+        '<input id="invoiceTo" type="date" value="' + escapeAttr(App.filters.invoiceTo) + '" aria-label="Hasta">' +
+        '<select id="invoicePayment"><option value="">Todos los métodos</option>' + App.config.paymentMethods.map(function (m) { return '<option ' + (App.filters.invoicePayment === m ? 'selected' : '') + '>' + escapeHtml(m) + '</option>'; }).join('') + '</select>' +
+        '<select id="invoiceStatus"><option value="">Todos los estados</option><option value="PAGADA" ' + (App.filters.invoiceStatus === 'PAGADA' ? 'selected' : '') + '>Pagada</option><option value="ANULADA" ' + (App.filters.invoiceStatus === 'ANULADA' ? 'selected' : '') + '>Anulada</option></select>' +
+        '<div class="filters-spacer"></div><button class="button button--outline" onclick="refreshInvoices()">' + icon('refresh') + 'Actualizar</button></div>' +
+      invoiceTableCard('Historial de facturas', filtered, false);
+    ['invoiceFrom', 'invoiceTo', 'invoicePayment', 'invoiceStatus'].forEach(function (id) {
+      document.getElementById(id).addEventListener('change', function () {
+        const map = {invoiceFrom: 'invoiceFrom', invoiceTo: 'invoiceTo', invoicePayment: 'invoicePayment', invoiceStatus: 'invoiceStatus'};
+        App.filters[map[id]] = this.value;
+        renderSales();
+      });
+    });
+  }
+
+  function filterInvoicesClient() {
+    const query = App.filters.invoiceQuery.trim().toLowerCase();
+    return App.invoices.filter(function (invoice) {
+      const day = new Date(invoice.date);
+      return (!App.filters.invoiceFrom || day >= new Date(App.filters.invoiceFrom + 'T00:00:00')) &&
+        (!App.filters.invoiceTo || day <= new Date(App.filters.invoiceTo + 'T23:59:59')) &&
+        (!App.filters.invoicePayment || invoice.paymentMethod === App.filters.invoicePayment) &&
+        (!App.filters.invoiceStatus || invoice.status === App.filters.invoiceStatus) &&
+        (!query || [
+          invoice.number, invoice.cashier, invoice.paymentMethod, invoice.status,
+          invoice.total
+        ].join(' ').toLowerCase().includes(query));
+    });
+  }
+
+  async function refreshInvoices() {
+    setBusy(true, 'Actualizando facturas...');
+    try {
+      App.invoices = await server('apiListInvoices', App.token, {
+        from: App.filters.invoiceFrom, to: App.filters.invoiceTo,
+        paymentMethod: App.filters.invoicePayment, status: App.filters.invoiceStatus
+      });
+      renderSales();
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function invoiceTableCard(title, invoices, compact) {
+    return '<article class="card table-card"><div class="card-header"><h2 class="section-title">' + escapeHtml(title) + '</h2>' +
+      (compact ? '<button class="button button--plain" onclick="navigate(\'sales\')">Ver todas ' + icon('arrow_forward') + '</button>' : '<span class="badge badge--info">' + invoices.length + ' registros</span>') +
+      '</div><div class="table-wrap"><table><thead><tr><th>Factura</th><th>Fecha</th><th>Cajero</th><th>Método</th><th>Total</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>' +
+      (invoices.length ? invoices.map(invoiceRow).join('') : '<tr><td colspan="7">' + emptyState('receipt_long', 'No hay facturas para mostrar.') + '</td></tr>') +
+      '</tbody></table></div></article>';
+  }
+
+  function invoiceRow(invoice) {
+    return '<tr><td class="table-primary">' + escapeHtml(invoice.number) + '</td><td>' + dateTime(invoice.date) + '</td><td>' + escapeHtml(invoice.cashier) + '</td>' +
+      '<td>' + escapeHtml(invoice.paymentMethod) + '</td><td><strong>' + money(invoice.total) + '</strong></td><td>' + statusBadge(invoice.status) + '</td>' +
+      '<td><div class="table-actions"><button class="icon-button" title="Ver detalle" onclick="openInvoice(\'' + invoice.id + '\')">' + icon('visibility') + '</button>' +
+      '<button class="icon-button" title="Imprimir" onclick="printInvoice(\'' + invoice.id + '\')">' + icon('print') + '</button>' +
+      (App.user.role === 'ADMIN' && invoice.status !== 'ANULADA' ? '<button class="icon-button" title="Anular" onclick="openVoidInvoice(\'' + invoice.id + '\')">' + icon('block') + '</button>' : '') +
+      '</div></td></tr>';
+  }
+
+  async function openInvoice(invoiceId) {
+    setBusy(true, 'Cargando factura...');
+    try {
+      const invoice = await server('apiGetInvoice', App.token, invoiceId);
+      openDrawer(invoiceDrawer(invoice));
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function printInvoice(invoiceId) {
+    setBusy(true, 'Preparando impresión...');
+    try {
+      const invoice = await server('apiGetInvoice', App.token, invoiceId);
+      showReceipt(invoice, false);
+      setTimeout(function () { printReceiptDocument(invoice); }, 180);
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function invoiceDrawer(invoice) {
+    return '<div class="modal-header"><div><h3>Detalle de factura</h3><small>' + escapeHtml(invoice.number) + ' · ' + dateTime(invoice.date) + '</small></div><button class="icon-button" onclick="closeDrawer()">' + icon('close') + '</button></div>' +
+      '<div class="drawer-body"><div class="summary-grid" style="grid-template-columns:1fr 1fr">' +
+        summaryCard('person', 'Cajero', invoice.cashier) + summaryCard('payments', 'Método', invoice.paymentMethod) +
+      '</div><div class="card"><div class="card-header"><h2 class="section-title">Productos comprados</h2>' + statusBadge(invoice.status) + '</div><div class="card-body">' +
+        invoice.items.map(function (item) {
+          return '<div class="receipt-item" style="padding:10px 0;border-bottom:1px solid var(--line)"><div><strong>' + escapeHtml(item.name) + '</strong><small>' + item.quantity + ' × ' + money(item.price) + '</small></div><strong>' + money(item.subtotal) + '</strong></div>';
+        }).join('') +
+        '<div class="receipt-totals">' + totalLine('Subtotal', money(invoice.subtotal)) +
+          totalLine('Descuento', '− ' + money(invoice.discount)) + totalLine('Impuesto', money(invoice.tax)) +
+          '<div class="receipt-total final"><span>Total</span><strong>' + money(invoice.total) + '</strong></div></div>' +
+        (invoice.status === 'ANULADA' ? '<div class="inline-error"><strong>Anulada:</strong> ' + escapeHtml(invoice.voidReason) + '</div>' : '') +
+      '</div></div></div><div class="drawer-footer"><div class="cart-actions">' +
+        '<button class="button button--primary" onclick="printInvoice(\'' + invoice.id + '\')">' + icon('print') + 'Imprimir</button>' +
+        (App.user.role === 'ADMIN' && invoice.status !== 'ANULADA' ? '<button class="button button--danger" onclick="openVoidInvoice(\'' + invoice.id + '\')">' + icon('block') + 'Anular</button>' : '<button class="button button--ghost" onclick="closeDrawer()">Cerrar</button>') +
+      '</div></div>';
+  }
+
+  function openVoidInvoice(invoiceId) {
+    closeDrawer();
+    openModal(
+      '<div class="modal-header"><h3>Anular factura</h3><button class="icon-button" onclick="closeModal()">' + icon('close') + '</button></div>' +
+      '<form id="voidForm"><div class="modal-body"><input type="hidden" name="invoiceId" value="' + escapeAttr(invoiceId) + '">' +
+        '<div class="inline-error" style="margin:0 0 18px"><strong>Atención:</strong> el inventario de la factura será repuesto automáticamente.</div>' +
+        '<label class="field"><span>Motivo de anulación</span><textarea name="reason" required placeholder="Explique por qué se anula esta factura"></textarea></label></div>' +
+      '<div class="modal-actions"><button type="button" class="button button--ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="button button--danger">' + icon('block') + 'Anular factura</button></div></form>'
+    );
+    document.getElementById('voidForm').addEventListener('submit', voidInvoice);
+  }
+
+  async function voidInvoice(event) {
+    event.preventDefault();
+    const payload = formObject(event.currentTarget);
+    const accepted = await confirmAction('Confirmar anulación', 'Esta acción quedará registrada y repondrá el stock vendido.', 'Sí, anular');
+    if (!accepted) return;
+    setBusy(true, 'Anulando factura...');
+    try {
+      const result = await server('apiVoidInvoice', App.token, payload);
+      App.products = result.products;
+      App.invoices = result.invoices;
+      closeModal();
+      renderSales();
+      showToast('Factura anulada y stock repuesto.', 'warning');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderUsers() {
+    const active = App.users.filter(function (u) { return u.status === 'ACTIVO'; }).length;
+    const visibleUsers = filterUsersClient();
+    document.getElementById('pageContent').innerHTML =
+      pageHeader('Gestión de usuarios', 'Administra accesos internos y permisos por rol.',
+        '<button class="button button--primary" onclick="openUserModal()">' + icon('person_add') + 'Agregar usuario</button>') +
+      '<section class="summary-grid">' +
+        summaryCard('group', 'Usuarios', App.users.length) +
+        summaryCard('verified_user', 'Activos', active) +
+        summaryCard('admin_panel_settings', 'Administradores', App.users.filter(function (u) { return u.role === 'ADMIN'; }).length) +
+        summaryCard('point_of_sale', 'Cajeros', App.users.filter(function (u) { return u.role === 'CAJERO'; }).length) +
+      '</section>' +
+      '<article class="card table-card"><div class="card-header"><h2 class="section-title">Usuarios internos</h2><span class="badge badge--success">' + active + ' activos</span></div><div class="table-wrap">' +
+      '<table><thead><tr><th>Nombre</th><th>Usuario / correo</th><th>Rol</th><th>Estado</th><th>Último acceso</th><th>Acciones</th></tr></thead><tbody>' +
+      (visibleUsers.length ? visibleUsers.map(function (user) {
+        return '<tr><td><div class="table-product"><span class="avatar">' + escapeHtml(user.name.charAt(0).toUpperCase()) + '</span><strong>' + escapeHtml(user.name) + '</strong></div></td>' +
+          '<td><strong>' + escapeHtml(user.username) + '</strong><br><small>' + escapeHtml(user.email) + '</small></td><td>' + roleBadge(user.role) + '</td><td>' + statusBadge(user.status) + '</td>' +
+          '<td>' + (user.lastAccess ? dateTime(user.lastAccess) : 'Nunca') + '</td><td><button class="icon-button" onclick="openUserModal(\'' + user.id + '\')">' + icon('edit') + '</button></td></tr>';
+      }).join('') : '<tr><td colspan="6">' + emptyState('group', 'No hay usuarios con esos filtros.') + '</td></tr>') + '</tbody></table></div></article>';
+  }
+
+  function filterUsersClient() {
+    const query = App.filters.userQuery.trim().toLowerCase();
+    if (!query) return App.users;
+    return App.users.filter(function (user) {
+      return [user.name, user.username, user.email, user.role, user.status]
+        .join(' ').toLowerCase().includes(query);
+    });
+  }
+
+  function openUserModal(userId) {
+    const user = App.users.find(function (item) { return item.id === userId; }) || {
+      id: '', name: '', username: '', email: '', role: 'CAJERO', status: 'ACTIVO'
+    };
+    openModal(
+      '<div class="modal-header"><h3>' + (user.id ? 'Editar usuario' : 'Agregar usuario') + '</h3><button class="icon-button" onclick="closeModal()">' + icon('close') + '</button></div>' +
+      '<form id="userForm"><div class="modal-body form-grid">' +
+        hiddenInput('id', user.id) +
+        fieldInput('name', 'Nombre completo', user.name, 'Ej. María Pérez', true) +
+        fieldInput('username', 'Usuario', user.username, 'Ej. mperez', true) +
+        fieldInput('email', 'Correo electrónico', user.email, 'correo@empresa.com', true, 'email') +
+        fieldSelect('role', 'Rol', ['CAJERO', 'ADMIN'], user.role) +
+        fieldInput('password', user.id ? 'Nueva contraseña (opcional)' : 'Contraseña temporal', '', 'Mínimo 8 caracteres', !user.id, 'password') +
+        fieldSelect('status', 'Estado', ['ACTIVO', 'INACTIVO'], user.status) +
+      '</div><div class="modal-actions"><button type="button" class="button button--ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="button button--primary">' + icon('save') + 'Guardar usuario</button></div></form>'
+    );
+    document.getElementById('userForm').addEventListener('submit', saveUser);
+  }
+
+  async function saveUser(event) {
+    event.preventDefault();
+    setBusy(true, 'Guardando usuario...');
+    try {
+      const result = await server('apiSaveUser', App.token, formObject(event.currentTarget));
+      App.users = result.users;
+      closeModal();
+      renderUsers();
+      showToast('Usuario guardado correctamente.');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderReports() {
+    const report = App.reports || emptyReports();
+    const categoryTotal = report.byCategory.reduce(function (sum, item) { return sum + item.value; }, 0) || 1;
+    const colors = ['#0b2f78', '#0a8f63', '#f59e0b', '#6d28d9', '#ef4444', '#3b82f6'];
+    let current = 0;
+    const stops = report.byCategory.slice(0, 6).map(function (item, index) {
+      const start = current;
+      current += item.value / categoryTotal * 100;
+      return colors[index % colors.length] + ' ' + start + '% ' + current + '%';
+    }).join(', ');
+    document.getElementById('pageContent').innerHTML =
+      pageHeader('Reportes analíticos', 'Rendimiento, rentabilidad e inventario en una sola vista.',
+        '<div class="header-actions"><button class="button ' + (App.filters.reportPreset === 'today' ? 'button--primary' : 'button--ghost') + '" onclick="loadReports(\'today\')">Hoy</button>' +
+        '<button class="button ' + (App.filters.reportPreset === 'week' ? 'button--primary' : 'button--ghost') + '" onclick="loadReports(\'week\')">Semana</button>' +
+        '<button class="button ' + (App.filters.reportPreset === 'month' ? 'button--primary' : 'button--ghost') + '" onclick="loadReports(\'month\')">Mes</button></div>') +
+      '<section class="reports-grid">' +
+        '<div class="report-kpis">' +
+          metricCard('payments', 'Ventas totales', money(report.totalSales), 'positive', report.invoiceCount + ' facturas') +
+          metricCard('trending_up', 'Ganancia estimada', money(report.estimatedProfit), 'positive', 'Venta menos costo') +
+          metricCard('shopping_cart', 'Ticket promedio', money(report.averageTicket), '', 'Promedio por factura') +
+        '</div>' +
+        '<article class="card report-main report-card"><div class="card-header"><h2 class="section-title">Ventas por día</h2><span class="badge badge--info">' + shortDate(report.from) + ' – ' + shortDate(report.to) + '</span></div>' +
+          '<div class="report-line-chart">' + lineChart(report.dailySales) + '</div></article>' +
+        '<article class="card report-side report-card"><div class="card-header"><h2 class="section-title">Ventas por categoría</h2></div>' +
+          '<div class="donut-wrap"><div class="donut" style="background:conic-gradient(' + (stops || '#e9edf5 0 100%') + ')"></div><div class="donut-center"><strong>' + money(report.totalSales) + '</strong><small>Total</small></div></div>' +
+          '<div class="legend">' + report.byCategory.slice(0, 6).map(function (item, index) {
+            return '<div class="legend-row"><i style="background:' + colors[index % colors.length] + '"></i><span>' + escapeHtml(item.label) + '</span><strong>' + Math.round(item.value / categoryTotal * 100) + '%</strong></div>';
+          }).join('') + '</div></article>' +
+        '<article class="card report-bottom-left"><div class="card-header"><h2 class="section-title">Top productos</h2></div><div class="top-products">' +
+          (report.topProducts.length ? report.topProducts.slice(0, 7).map(function (item, index) {
+            return '<div class="top-product-row"><span>' + (index + 1) + '</span><div><strong>' + escapeHtml(item.name) + '</strong><small>' + item.units + ' unidades</small></div><strong>' + money(item.total) + '</strong></div>';
+          }).join('') : emptyState('bar_chart', 'Sin ventas en este período.')) + '</div></article>' +
+        '<article class="card report-bottom-right table-card"><div class="card-header"><h2 class="section-title">Movimientos recientes</h2><span class="badge badge--info">Inventario</span></div><div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Stock final</th></tr></thead><tbody>' +
+          report.recentMovements.slice(0, 10).map(function (m) {
+            return '<tr><td>' + dateTime(m.date) + '</td><td><strong>' + escapeHtml(m.product) + '</strong></td><td>' + escapeHtml(m.type) + '</td><td>' + (m.quantity > 0 ? '+' : '') + m.quantity + '</td><td>' + m.stockAfter + '</td></tr>';
+          }).join('') + '</tbody></table></div></article>' +
+      '</section>';
+  }
+
+  async function loadReports(preset) {
+    App.filters.reportPreset = preset;
+    setBusy(true, 'Calculando reportes...');
+    try {
+      App.reports = await server('apiGetReports', App.token, {preset: preset});
+      renderReports();
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function lineChart(data) {
+    if (!data || !data.length) return emptyState('show_chart', 'No hay datos en este período.');
+    const width = 720, height = 260, pad = 32;
+    const max = Math.max.apply(null, data.map(function (item) { return item.total; }).concat([1]));
+    const points = data.map(function (item, index) {
+      const x = pad + (data.length === 1 ? (width - pad * 2) / 2 : index * (width - pad * 2) / (data.length - 1));
+      const y = height - pad - item.total / max * (height - pad * 2);
+      return {x: x, y: y, item: item};
+    });
+    const polyline = points.map(function (point) { return point.x + ',' + point.y; }).join(' ');
+    const area = pad + ',' + (height - pad) + ' ' + polyline + ' ' + (width - pad) + ',' + (height - pad);
+    return '<svg class="line-chart-svg" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Gráfico de ventas">' +
+      '<defs><linearGradient id="chartAreaGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#0b2f78" stop-opacity=".22"/><stop offset="1" stop-color="#0b2f78" stop-opacity=".02"/></linearGradient></defs>' +
+      [0,1,2,3,4].map(function (i) { const y = pad + i * (height - pad * 2) / 4; return '<line class="chart-grid-line" x1="' + pad + '" x2="' + (width-pad) + '" y1="' + y + '" y2="' + y + '"/>'; }).join('') +
+      '<polygon class="chart-area" points="' + area + '"/><polyline class="chart-line" points="' + polyline + '"/>' +
+      points.map(function (point) { return '<circle class="chart-dot" cx="' + point.x + '" cy="' + point.y + '" r="5"><title>' + escapeHtml(point.item.label) + ': ' + money(point.item.total) + '</title></circle>'; }).join('') +
+      points.filter(function (_, index) { return data.length <= 12 || index % Math.ceil(data.length / 10) === 0; }).map(function (point) {
+        return '<text x="' + point.x + '" y="' + (height - 7) + '" text-anchor="middle" font-size="10" fill="#687083">' + escapeHtml(point.item.label) + '</text>';
+      }).join('') + '</svg>';
+  }
+
+  function renderSettings() {
+    const c = App.config;
+    document.getElementById('pageContent').innerHTML =
+      pageHeader('Configuración del sistema', 'Personaliza identidad, facturación y métodos de pago.') +
+      '<form id="settingsForm"><section class="settings-grid">' +
+        '<article class="card"><div class="card-header"><h2 class="section-title">Datos del kiosko</h2>' + icon('storefront') + '</div><div class="card-body form-grid">' +
+          fieldInput('BUSINESS_NAME', 'Nombre del kiosko', c.businessName, '', true) +
+          fieldInput('PHONE', 'Teléfono', c.phone, 'Opcional') +
+          fieldInput('ADDRESS', 'Dirección', c.address, 'Opcional', false, 'text', '', 'field--full') +
+          fieldInput('TAX_ID', 'RNC / dato fiscal', c.taxId, 'Opcional') +
+          fieldInput('CURRENCY', 'Moneda', c.currency, 'RD$', true) +
+          fieldInput('LOGO_FILE_ID', 'ID del logo en Drive', c.logoFileId, 'Opcional', false, 'text', '', 'field--full') +
+          fieldInput('PRIMARY_COLOR', 'Color principal', c.primaryColor, '#0b2f78', true, 'color') +
+        '</div></article>' +
+        '<article class="card"><div class="card-header"><h2 class="section-title">Facturación</h2>' + icon('receipt_long') + '</div><div class="card-body form-grid">' +
+          fieldInput('INVOICE_PREFIX', 'Prefijo de factura', c.invoicePrefix, 'KP', true) +
+          '<label class="field"><span>Próximo número</span><div class="change-box">' + c.invoiceNext + '</div></label>' +
+          '<label class="field field--full"><span>Impuestos</span><div class="switch-line"><div><strong>Aplicar impuesto</strong><small style="display:block;color:var(--muted)">Se calcula al generar cada factura.</small></div><label class="switch"><input name="TAX_ENABLED" type="checkbox" ' + (c.taxEnabled ? 'checked' : '') + '><span></span></label></div></label>' +
+          fieldInput('TAX_RATE', 'Tasa de impuesto (%)', c.taxRate, '18', true, 'number', '0.01') +
+          fieldInput('PAYMENT_METHODS', 'Métodos de pago', c.paymentMethods.join(', '), 'Separados por coma', true, 'text', '', 'field--full') +
+          '<div class="form-note field--full"><div><strong>Categorías y características</strong><p>Administra aquí los tipos de producto y los datos adicionales que debe recoger cada uno.</p></div><button class="button button--outline" type="button" onclick="openCategoryManager()">' + icon('category') + 'Administrar categorías</button></div>' +
+          '<label class="field field--full"><span>Pie del comprobante</span><textarea name="RECEIPT_FOOTER">' + escapeHtml(c.receiptFooter) + '</textarea></label>' +
+        '</div></article>' +
+      '</section><div style="display:flex;justify-content:flex-end;margin-top:18px"><button class="button button--primary button--large" type="submit">' + icon('save') + 'Guardar configuración</button></div></form>' +
+      '<article class="card" style="margin-top:22px"><div class="card-header"><h2 class="section-title">Cambiar mi contraseña</h2>' + icon('password') + '</div><form id="passwordForm"><div class="card-body form-grid">' +
+        fieldInput('currentPassword', 'Contraseña actual', '', '', true, 'password') +
+        fieldInput('newPassword', 'Nueva contraseña', '', 'Mínimo 8 caracteres', true, 'password') +
+      '</div><div class="modal-actions"><button class="button button--outline" type="submit">' + icon('key') + 'Actualizar contraseña</button></div></form></article>';
+    document.getElementById('settingsForm').addEventListener('submit', saveSettings);
+    document.getElementById('passwordForm').addEventListener('submit', changePassword);
+  }
+
+  async function saveSettings(event) {
+    event.preventDefault();
+    const payload = formObject(event.currentTarget);
+    payload.TAX_ENABLED = event.currentTarget.elements.TAX_ENABLED.checked ? 'TRUE' : 'FALSE';
+    setBusy(true, 'Guardando configuración...');
+    try {
+      const result = await server('apiSaveSettings', App.token, payload);
+      App.config = result.config;
+      applyUserData();
+      renderSettings();
+      showToast('Configuración actualizada.');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changePassword(event) {
+    event.preventDefault();
+    setBusy(true, 'Actualizando contraseña...');
+    try {
+      await server('apiChangeMyPassword', App.token, formObject(event.currentTarget));
+      event.currentTarget.reset();
+      showToast('Contraseña actualizada.');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function showReceipt(invoice, success) {
+    const business = invoice.business || App.config;
+    App.activeReceipt = invoice;
+    openModal(
+      '<div>' +
+        (success ? '<div class="receipt-success">' + icon('check_circle') + '<h3>¡Venta exitosa!</h3><p>Factura guardada e inventario actualizado automáticamente.</p></div>' : '') +
+        '<div class="receipt">' + receiptPaperMarkup(invoice, business, false) + '</div></div>' +
+      '<div class="modal-actions"><button class="button button--outline" onclick="printActiveReceipt()">' + icon('print') + 'Imprimir</button>' +
+        '<button class="button button--primary" onclick="closeModal(); navigate(\'pos\')">' + icon('add_shopping_cart') + 'Nueva venta</button></div>',
+      ''
+    );
+  }
+
+  function receiptPaperMarkup(invoice, business, printMode) {
+    const paymentMark = printMode ? '<span class="receipt-payment-mark">$</span>' : icon(paymentIcon(invoice.paymentMethod));
+    return '<div class="receipt-paper"><div class="receipt-brand">' +
+      (business.logoDataUrl ? '<img src="' + escapeAttr(business.logoDataUrl) + '" alt="Logo">' : '') +
+      '<h2>' + escapeHtml(business.businessName || 'KioskoPOS') + '</h2>' +
+      (business.address ? '<p>' + escapeHtml(business.address) + '</p>' : '') +
+      (business.taxId ? '<p>RNC: ' + escapeHtml(business.taxId) + '</p>' : '') +
+      (business.phone ? '<p>Tel: ' + escapeHtml(business.phone) + '</p>' : '') + '</div>' +
+      '<div class="receipt-meta"><div><span>NO. FACTURA</span><strong>' + escapeHtml(invoice.number) + '</strong></div><div><span>FECHA</span><strong>' + dateTime(invoice.date) + '</strong></div><div><span>CAJERO</span><strong>' + escapeHtml(invoice.cashier) + '</strong></div><div><span>ESTADO</span><strong>' + escapeHtml(invoice.status) + '</strong></div></div>' +
+      '<div class="receipt-items">' + invoice.items.map(function (item) {
+        return '<div class="receipt-item"><div><strong>' + escapeHtml(item.name) + '</strong><small>' + item.quantity + ' × ' + money(item.price) + '</small></div><strong>' + money(item.subtotal) + '</strong></div>';
+      }).join('') + '</div><div class="receipt-totals">' +
+      totalLine('Subtotal', money(invoice.subtotal)) + (invoice.discount ? totalLine('Descuento', '− ' + money(invoice.discount)) : '') +
+      (invoice.tax ? totalLine('Impuesto', money(invoice.tax)) : '') +
+      '<div class="receipt-total final"><span>TOTAL</span><strong>' + money(invoice.total) + '</strong></div></div>' +
+      '<div class="receipt-payment">' + paymentMark + ' ' + escapeHtml(invoice.paymentMethod) +
+      (invoice.paymentMethod === 'Efectivo' ? ' · Recibido ' + money(invoice.received) + ' · Cambio ' + money(invoice.change) : '') + '</div>' +
+      '<p class="receipt-footer">' + escapeHtml(business.receiptFooter || '¡Gracias por su compra!') + '</p></div>';
+  }
+
+  function printActiveReceipt() {
+    if (!App.activeReceipt) return showToast('No hay una factura preparada para imprimir.', 'warning');
+    printReceiptDocument(App.activeReceipt);
+  }
+
+  function printReceiptDocument(invoice) {
+    const business = invoice.business || App.config;
+    const frame = document.createElement('iframe');
+    frame.className = 'print-frame';
+    frame.setAttribute('title', 'Impresión de factura ' + invoice.number);
+    frame.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(frame);
+    const printDocument = frame.contentDocument || frame.contentWindow.document;
+    const styles = '*,*::before,*::after{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#111;font-family:Arial,Helvetica,sans-serif;font-size:10px;line-height:1.28}body{width:80mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}.receipt-paper{width:80mm;min-height:auto;padding:5mm 4.5mm;background:#fff}.receipt-brand{text-align:center;margin-bottom:9px}.receipt-brand img{display:block;max-width:46mm;max-height:16mm;object-fit:contain;margin:0 auto 6px}.receipt-brand h2{font-size:16px;color:#111;margin:0 0 3px;font-weight:800}.receipt-brand p{margin:1px 0;color:#333;font-size:9px}.receipt-meta{display:grid;grid-template-columns:1fr 1fr;gap:5px 9px;border-top:1px dashed #333;border-bottom:1px dashed #333;padding:7px 0;margin:8px 0}.receipt-meta div{display:flex;flex-direction:column;gap:1px;min-width:0}.receipt-meta span{font-size:7px;color:#555;text-transform:uppercase}.receipt-meta strong{font-size:9px;color:#111;word-break:break-word}.receipt-items{padding:6px 0;border-bottom:1px dashed #333}.receipt-item{display:flex;justify-content:space-between;gap:8px;padding:3px 0;break-inside:avoid}.receipt-item>div{display:flex;flex-direction:column;min-width:0}.receipt-item strong{font-size:9.5px}.receipt-item small{color:#555;margin-top:1px;font-size:8px}.receipt-totals{padding-top:6px}.receipt-total{display:flex;justify-content:space-between;gap:8px;padding:2px 0;color:#333}.receipt-total.final{font-size:14px;color:#111;border-top:1px solid #111;margin-top:5px;padding-top:6px;font-weight:800}.receipt-payment{margin-top:8px;padding:6px 0;border-top:1px dashed #333;border-bottom:1px dashed #333;color:#111;background:#fff;border-radius:0;font-weight:700}.receipt-payment-mark{display:inline-grid;place-items:center;width:13px;height:13px;border:1px solid currentColor;border-radius:50%;margin-right:3px;font-size:8px}.receipt-footer{text-align:center;color:#333;font-style:italic;margin:11px 0 0;font-size:8.5px}@page{size:80mm 210mm;margin:0}@media print{html,body{width:80mm;height:auto}.receipt-paper{box-shadow:none;border:0}}';
+    printDocument.open();
+    printDocument.write('<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(invoice.number) + '</title><style>' + styles + '</style></head><body>' + receiptPaperMarkup(invoice, business, true) + '</body></html>');
+    printDocument.close();
+
+    let printed = false;
+    const cleanup = function () { if (frame.parentNode) frame.parentNode.removeChild(frame); };
+    const startPrint = function () {
+      if (printed) return;
+      printed = true;
+      frame.contentWindow.addEventListener('afterprint', function () { setTimeout(cleanup, 250); }, {once:true});
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+      setTimeout(cleanup, 60000);
+    };
+    frame.onload = function () { setTimeout(startPrint, 120); };
+    if (printDocument.readyState === 'complete') setTimeout(startPrint, 120);
+  }
+
+  function openModal(content, size) {
+    document.getElementById('modalRoot').innerHTML = '<div class="modal-overlay" onmousedown="overlayPointerDown(event)" onclick="overlayClose(event, \'modal\')"><div class="modal ' + (size === 'wide' ? 'modal--wide' : '') + '">' + content + '</div></div>';
+  }
+
+  function closeModal() {
+    document.getElementById('modalRoot').innerHTML = '';
+  }
+
+  function openDrawer(content) {
+    document.getElementById('drawerRoot').innerHTML = '<div class="drawer-overlay" onmousedown="overlayPointerDown(event)" onclick="overlayClose(event, \'drawer\')"><aside class="drawer">' + content + '</aside></div>';
+  }
+
+  function closeDrawer() {
+    document.getElementById('drawerRoot').innerHTML = '';
+  }
+
+  function overlayPointerDown(event) {
+    event.currentTarget.dataset.startedOnOverlay = event.target === event.currentTarget ? '1' : '0';
+  }
+
+  function overlayClose(event, type) {
+    if (event.target !== event.currentTarget) return;
+    if (event.currentTarget.dataset.startedOnOverlay !== '1') return;
+    type === 'modal' ? closeModal() : closeDrawer();
+  }
+
+  function confirmAction(title, message, acceptLabel) {
+    return new Promise(function (resolve) {
+      const overlay = document.getElementById('confirmOverlay');
+      document.getElementById('confirmTitle').textContent = title;
+      document.getElementById('confirmMessage').textContent = message;
+      document.getElementById('confirmAccept').textContent = acceptLabel || 'Confirmar';
+      overlay.hidden = false;
+      const cleanup = function (answer) {
+        overlay.hidden = true;
+        document.getElementById('confirmAccept').onclick = null;
+        document.getElementById('confirmCancel').onclick = null;
+        resolve(answer);
+      };
+      document.getElementById('confirmAccept').onclick = function () { cleanup(true); };
+      document.getElementById('confirmCancel').onclick = function () { cleanup(false); };
+    });
+  }
+
+  function openSidebar() {
+    document.getElementById('sidebar').classList.add('open');
+    document.getElementById('sidebarBackdrop').classList.add('show');
+  }
+
+  function closeSidebar() {
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sidebarBackdrop').classList.remove('show');
+  }
+
+  function handleGlobalSearch(event) {
+    const value = event.target.value;
+    if (App.route === 'pos') {
+      App.filters.posQuery = value;
+      const input = document.getElementById('posSearch');
+      if (input) input.value = value;
+      renderProductGrid();
+    } else if (App.route === 'products') {
+      App.filters.productQuery = value;
+      renderProducts();
+    } else if (App.route === 'inventory') {
+      App.filters.inventoryQuery = value;
+      renderInventory();
+    } else if (App.route === 'sales') {
+      App.filters.invoiceQuery = value;
+      renderSales();
+    } else if (App.route === 'users') {
+      App.filters.userQuery = value;
+      renderUsers();
+    }
+  }
+
+  function getCurrentSearch() {
+    if (App.route === 'pos') return App.filters.posQuery;
+    if (App.route === 'products') return App.filters.productQuery;
+    if (App.route === 'inventory') return App.filters.inventoryQuery;
+    if (App.route === 'sales') return App.filters.invoiceQuery;
+    if (App.route === 'users') return App.filters.userQuery;
+    return '';
+  }
+
+  function updateGlobalSearchState() {
+    const wrapper = document.querySelector('.topbar-search');
+    const input = document.getElementById('globalSearch');
+    const visible = Boolean(SEARCHABLE_ROUTES[App.route]);
+    wrapper.hidden = !visible;
+    input.disabled = !visible;
+    input.placeholder = visible ? searchPlaceholderForRoute(App.route) : '';
+  }
+
+  function searchPlaceholderForRoute(route) {
+    const labels = {
+      pos: 'Buscar productos para vender...',
+      products: 'Buscar productos...',
+      inventory: 'Buscar movimientos o productos...',
+      sales: 'Buscar facturas, cajeros o métodos...',
+      users: 'Buscar usuarios...'
+    };
+    return labels[route] || '';
+  }
+
+  async function navigateProductMovements(productId) {
+    App.filters.inventoryProductId = productId;
+    App.filters.inventoryFrom = '';
+    App.filters.inventoryTo = '';
+    App.filters.inventoryType = '';
+    App.movements = [];
+    navigate('inventory');
+    await refreshInventoryMovements();
+  }
+
+  function setBusy(active, message) {
+    App.busyCount = Math.max(0, App.busyCount + (active ? 1 : -1));
+    const overlay = document.getElementById('busyOverlay');
+    if (message) document.getElementById('busyText').textContent = message;
+    overlay.hidden = App.busyCount === 0;
+  }
+
+  function showToast(message, type) {
+    const container = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = 'toast ' + (type || '');
+    toast.innerHTML = icon(type === 'error' ? 'error' : type === 'warning' ? 'warning' : 'check_circle') +
+      '<span>' + escapeHtml(message) + '</span><button aria-label="Cerrar">' + icon('close') + '</button>';
+    toast.querySelector('button').onclick = function () { toast.remove(); };
+    container.appendChild(toast);
+    setTimeout(function () { toast.remove(); }, 4800);
+  }
+
+  function pageHeader(title, subtitle, actions) {
+    return '<header class="page-header"><div class="page-title"><h1>' + escapeHtml(title) + '</h1><p>' + escapeHtml(subtitle) + '</p></div>' +
+      (actions ? '<div class="header-actions">' + actions + '</div>' : '') + '</header>';
+  }
+
+  function metricCard(iconName, label, value, valueClass, note) {
+    return '<article class="metric-card"><div class="metric-icon ' + (iconName === 'warning' ? 'metric-icon--danger' : iconName === 'payments' || iconName === 'trending_up' ? 'metric-icon--success' : '') + '">' + icon(iconName) + '</div>' +
+      '<small>' + escapeHtml(String(label)) + '</small><strong class="' + (valueClass || '') + '">' + value + '</strong><span>' + escapeHtml(String(note || '')) + '</span></article>';
+  }
+
+  function summaryCard(iconName, label, value) {
+    return '<article class="summary-card"><i>' + icon(iconName) + '</i><div><span>' + escapeHtml(String(label)) + '</span><strong>' + escapeHtml(String(value)) + '</strong></div></article>';
+  }
+
+  function quickAction(iconName, title, subtitle, handler) {
+    return '<button class="quick-action" onclick="' + handler + '"><i>' + icon(iconName) + '</i><div><strong>' + escapeHtml(title) + '</strong><small>' + escapeHtml(subtitle) + '</small></div></button>';
+  }
+
+  function renderLowStockAlerts(products) {
+    if (!products || !products.length) return emptyState('check_circle', 'No hay alertas de inventario.');
+    return products.map(function (p) {
+      return '<div class="alert-item ' + (p.stock === 0 ? 'danger' : '') + '"><span class="product-symbol">' + icon(CATEGORY_ICONS[p.category] || 'inventory_2') + '</span>' +
+        '<div><strong>' + escapeHtml(p.name) + '</strong><small>' + (p.stock === 0 ? 'Producto agotado' : 'Quedan ' + p.stock + ' · mínimo ' + p.minimum) + '</small></div>' +
+        '<button class="icon-button" onclick="openInventoryModal(\'ENTRADA\', \'' + p.id + '\')">' + icon('add_box') + '</button></div>';
+    }).join('');
+  }
+
+  function emptyState(iconName, message) {
+    return '<div class="empty-state">' + icon(iconName) + '<span>' + escapeHtml(message) + '</span></div>';
+  }
+
+  function statusBadge(status) {
+    const normalized = String(status || '').toUpperCase();
+    const map = {
+      ACTIVO: 'badge--success', PAGADA: 'badge--success',
+      INACTIVO: 'badge--muted', ANULADA: 'badge--danger'
+    };
+    return '<span class="badge ' + (map[normalized] || 'badge--info') + '">' + escapeHtml(normalized) + '</span>';
+  }
+
+  function roleBadge(role) {
+    return '<span class="badge ' + (role === 'ADMIN' ? 'badge--info' : 'badge--success') + '">' + roleLabel(role) + '</span>';
+  }
+
+  function roleLabel(role) {
+    return role === 'ADMIN' ? 'Administrador' : 'Cajero';
+  }
+
+  function paymentIcon(method) {
+    const value = String(method).toLowerCase();
+    if (value.includes('tarjeta')) return 'credit_card';
+    if (value.includes('transfer')) return 'account_balance';
+    if (value.includes('mixto')) return 'payments';
+    return 'payments';
+  }
+
+  function totalLine(label, value) {
+    return '<div class="receipt-total total-line"><span>' + escapeHtml(label) + '</span><strong>' + value + '</strong></div>';
+  }
+
+  function fieldInput(name, label, value, placeholder, required, type, step, extraClass) {
+    return '<label class="field ' + (extraClass || '') + '"><span>' + escapeHtml(label) + '</span><input name="' + name + '" type="' + (type || 'text') + '"' +
+      (step ? ' step="' + step + '"' : '') + (required ? ' required' : '') + ' value="' + escapeAttr(value == null ? '' : value) + '" placeholder="' + escapeAttr(placeholder || '') + '"></label>';
+  }
+
+  function fieldSelect(name, label, options, selected) {
+    return '<label class="field"><span>' + escapeHtml(label) + '</span><select name="' + name + '">' +
+      options.map(function (option) { return '<option value="' + escapeAttr(option) + '" ' + (String(option) === String(selected) ? 'selected' : '') + '>' + escapeHtml(option) + '</option>'; }).join('') +
+      '</select></label>';
+  }
+
+  function fieldSelectObjects(name, label, options, selected, extraClass) {
+    return '<label class="field ' + (extraClass || '') + '"><span>' + escapeHtml(label) + '</span><select name="' + name + '" required><option value="">Seleccione...</option>' +
+      options.map(function (option) { return '<option value="' + escapeAttr(option.value) + '" ' + (String(option.value) === String(selected) ? 'selected' : '') + '>' + escapeHtml(option.label) + '</option>'; }).join('') +
+      '</select></label>';
+  }
+
+  function hiddenInput(name, value) {
+    return '<input type="hidden" name="' + name + '" value="' + escapeAttr(value || '') + '">';
+  }
+
+  function formObject(form) {
+    const result = {};
+    new FormData(form).forEach(function (value, key) { result[key] = value; });
+    return result;
+  }
+
+  function money(value) {
+    const currency = App.config ? App.config.currency : 'RD$';
+    return currency + ' ' + Number(value || 0).toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+
+  function compactMoney(value) {
+    const n = Number(value || 0);
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'K';
+    return Math.round(n).toString();
+  }
+
+  function roundMoney(value) {
+    return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+  }
+
+  function dateTime(value) {
+    if (!value) return '';
+    return new Intl.DateTimeFormat('es-DO', {dateStyle: 'short', timeStyle: 'short'}).format(new Date(value));
+  }
+
+  function shortDate(value) {
+    if (!value) return '';
+    return new Intl.DateTimeFormat('es-DO', {day: '2-digit', month: 'short'}).format(new Date(value));
+  }
+
+  function truncate(value, length) {
+    const text = String(value || '');
+    return text.length > length ? text.slice(0, length - 1) + '…' : text;
+  }
+
+  function icon(name) {
+    return '<span class="material-symbols-rounded" aria-hidden="true">' + name + '</span>';
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+  }
+
+  function escapeAttr(value) {
+    return escapeHtml(value).replace(/`/g, '&#096;');
+  }
+
+  function escapeJs(value) {
+    return String(value == null ? '' : value).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
+  }
+
+  function invoiceSummaryFromDetail(invoice) {
+    const copy = Object.assign({}, invoice);
+    delete copy.items;
+    delete copy.business;
+    return copy;
+  }
+
+  function emptyDashboard() {
+    return {salesToday: 0, invoiceCountToday: 0, lowStockCount: 0, topProduct: 'Sin ventas', topProductUnits: 0, weekTotal: 0, topCashier: 'Sin ventas', dailySales: [], latestInvoices: [], lowStock: []};
+  }
+
+  function emptyReports() {
+    return {from: new Date().toISOString(), to: new Date().toISOString(), totalSales: 0, invoiceCount: 0, averageTicket: 0, estimatedProfit: 0, dailySales: [], byCategory: [], byCashier: [], topProducts: [], lowStock: [], recentMovements: []};
+  }
+
+  function server(method) {
+    const args = Array.prototype.slice.call(arguments, 1);
+    if (window.google && google.script && google.script.run) {
+      return new Promise(function (resolve, reject) {
+        const runner = google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(function (error) { reject(new Error(error && error.message ? error.message : String(error))); });
+        runner[method].apply(runner, args);
+      });
+    }
+    return DemoApi.call(method, args);
+  }
+
+  const DemoApi = (function () {
+    let db = null;
+
+    function initDb() {
+      if (db) return;
+      const now = new Date();
+      const daysAgo = function (days, hour) {
+        const date = new Date(now); date.setDate(date.getDate() - days); date.setHours(hour || 10, 15, 0, 0); return date.toISOString();
+      };
+      const phoneFields = [
+        {id:'cf-marca',key:'marca',label:'Marca',type:'TEXT',required:true,options:[],order:1},
+        {id:'cf-modelo',key:'modelo',label:'Modelo',type:'TEXT',required:true,options:[],order:2},
+        {id:'cf-color',key:'color',label:'Color',type:'TEXT',required:false,options:[],order:3},
+        {id:'cf-memoria',key:'memoria',label:'Memoria',type:'TEXT',required:false,options:[],order:4},
+        {id:'cf-imei',key:'imei',label:'IMEI',type:'TEXT',required:false,options:[],order:5},
+        {id:'cf-serial',key:'serial',label:'Serial',type:'TEXT',required:false,options:[],order:6},
+        {id:'cf-descripcion',key:'descripcion',label:'Descripción',type:'TEXTAREA',required:false,options:[],order:7}
+      ];
+      const categories = ['Bebidas','Snacks','Comestibles','Dulces','Galletas','Varios','Celulares','Artículos'].map(function (name, index) {
+        return {id:'c'+(index+1),name:name,description:name === 'Celulares' ? 'Equipos móviles con identificación y especificaciones.' : '',status:'ACTIVO',fields:name === 'Celulares' ? clone(phoneFields) : []};
+      });
+      const categoryId = function (name) { return categories.find(function (category) { return category.name === name; }).id; };
+      const products = [
+        ['p1','BEB-001','7460001','Refresco Cola 20 oz','Bebidas',50,32,24,6],
+        ['p2','BEB-002','7460002','Agua purificada 16 oz','Bebidas',25,12,48,10],
+        ['p3','BEB-003','7460003','Jugo de naranja natural','Bebidas',45,28,16,5],
+        ['p4','SNK-001','7460004','Papas clásicas familiares','Snacks',65,40,12,5],
+        ['p5','SNK-002','7460005','Palitos de queso','Snacks',35,20,8,4],
+        ['p6','DUL-001','7460006','Chocolate con leche','Dulces',40,24,3,5],
+        ['p7','GAL-001','7460007','Galletas de chocolate','Galletas',30,17,20,5],
+        ['p8','COM-001','7460008','Pan de agua fresco','Comestibles',15,8,30,8],
+        ['p9','COM-002','7460009','Sándwich jamón y queso','Comestibles',125,78,10,3],
+        ['p10','VAR-001','7460010','Servilletas paquete','Varios',55,31,0,3],
+        ['p11','DUL-002','7460011','Caramelos surtidos','Dulces',10,4,42,12],
+        ['p12','GAL-002','7460012','Galletas de vainilla','Galletas',25,14,18,5],
+        ['p13','','','Samsung Galaxy A55','Celulares',18900,16400,4,1],
+        ['p14','ART-001','','Cargador USB-C 25W','Artículos',950,620,9,2]
+      ].map(function (p) {
+        const attributes = p[4] === 'Celulares' ? [
+          {fieldId:'cf-marca',key:'marca',label:'Marca',type:'TEXT',value:'Samsung'},
+          {fieldId:'cf-modelo',key:'modelo',label:'Modelo',type:'TEXT',value:'Galaxy A55'},
+          {fieldId:'cf-color',key:'color',label:'Color',type:'TEXT',value:'Azul marino'},
+          {fieldId:'cf-memoria',key:'memoria',label:'Memoria',type:'TEXT',value:'256 GB'},
+          {fieldId:'cf-imei',key:'imei',label:'IMEI',type:'TEXT',value:'359876543210123'},
+          {fieldId:'cf-serial',key:'serial',label:'Serial',type:'TEXT',value:'R58X123KPOS'},
+          {fieldId:'cf-descripcion',key:'descripcion',label:'Descripción',type:'TEXTAREA',value:'Equipo liberado con garantía del kiosko.'}
+        ] : [];
+        return {id:p[0],sku:p[1],barcode:p[2],name:p[3],manualName:p[4] === 'Celulares' ? '' : p[3],category:p[4],categoryId:categoryId(p[4]),attributes:attributes,searchText:attributes.map(function(a){return a.value;}).join(' '),price:p[5],cost:p[6],stock:p[7],minimum:p[8],imageFileId:'',imageUrl:'',status:'ACTIVO'};
+      });
+      const users = [
+        {id:'u1',name:'Administrador',username:'admin',email:'admin@kiosk.local',role:'ADMIN',status:'ACTIVO',lastAccess:now.toISOString()},
+        {id:'u2',name:'Laura Sánchez',username:'laura',email:'laura@kiosk.local',role:'CAJERO',status:'ACTIVO',lastAccess:daysAgo(0,8)},
+        {id:'u3',name:'Carlos Pérez',username:'carlos',email:'carlos@kiosk.local',role:'CAJERO',status:'ACTIVO',lastAccess:daysAgo(1,16)}
+      ];
+      const invoiceItems = [
+        {productId:'p1',sku:'BEB-001',name:'Refresco Cola 20 oz',category:'Bebidas',quantity:2,price:50,cost:32,subtotal:100},
+        {productId:'p4',sku:'SNK-001',name:'Papas clásicas familiares',category:'Snacks',quantity:1,price:65,cost:40,subtotal:65}
+      ];
+      const invoices = [
+        demoInvoice('f1','KP-000128',daysAgo(0,14),'u2','Laura Sánchez','Efectivo',165,'PAGADA',invoiceItems),
+        demoInvoice('f2','KP-000127',daysAgo(0,12),'u3','Carlos Pérez','Tarjeta',250,'PAGADA',[{productId:'p9',sku:'COM-002',name:'Sándwich jamón y queso',category:'Comestibles',quantity:2,price:125,cost:78,subtotal:250}]),
+        demoInvoice('f3','KP-000126',daysAgo(0,10),'u2','Laura Sánchez','Transferencia',90,'PAGADA',[{productId:'p3',sku:'BEB-003',name:'Jugo de naranja natural',category:'Bebidas',quantity:2,price:45,cost:28,subtotal:90}]),
+        demoInvoice('f4','KP-000125',daysAgo(1,17),'u2','Laura Sánchez','Efectivo',240,'PAGADA',[{productId:'p6',sku:'DUL-001',name:'Chocolate con leche',category:'Dulces',quantity:6,price:40,cost:24,subtotal:240}]),
+        demoInvoice('f5','KP-000124',daysAgo(2,11),'u3','Carlos Pérez','Tarjeta',300,'PAGADA',[{productId:'p7',sku:'GAL-001',name:'Galletas de chocolate',category:'Galletas',quantity:10,price:30,cost:17,subtotal:300}]),
+        demoInvoice('f6','KP-000123',daysAgo(3,15),'u2','Laura Sánchez','Efectivo',125,'ANULADA',[{productId:'p9',sku:'COM-002',name:'Sándwich jamón y queso',category:'Comestibles',quantity:1,price:125,cost:78,subtotal:125}])
+      ];
+      const movements = [
+        {id:'m1',date:daysAgo(0,14),productId:'p1',sku:'BEB-001',product:'Refresco Cola 20 oz',type:'VENTA',quantity:-2,comment:'Venta KP-000128',user:'Laura Sánchez',stockBefore:26,stockAfter:24,invoiceId:'f1'},
+        {id:'m2',date:daysAgo(0,14),productId:'p4',sku:'SNK-001',product:'Papas clásicas familiares',type:'VENTA',quantity:-1,comment:'Venta KP-000128',user:'Laura Sánchez',stockBefore:13,stockAfter:12,invoiceId:'f1'},
+        {id:'m3',date:daysAgo(1,9),productId:'p3',sku:'BEB-003',product:'Jugo de naranja natural',type:'ENTRADA',quantity:12,comment:'Reposición semanal',user:'Administrador',stockBefore:6,stockAfter:18,invoiceId:''},
+        {id:'m4',date:daysAgo(2,10),productId:'p6',sku:'DUL-001',product:'Chocolate con leche',type:'SALIDA',quantity:-2,comment:'Productos vencidos',user:'Administrador',stockBefore:5,stockAfter:3,invoiceId:''}
+      ];
+      db = {
+        config:{appName:'KioskoPOS',businessName:'KioskoPOS',currency:'RD$',invoicePrefix:'KP',invoiceNext:129,taxEnabled:false,taxRate:18,paymentMethods:['Efectivo','Tarjeta','Transferencia','Mixto'],categories:categories.map(function(category){return category.name;}),address:'Av. Principal #123, Santo Domingo',taxId:'101-00123-4',phone:'809-555-0101',logoFileId:'',logoDataUrl:'',primaryColor:'#0b2f78',receiptFooter:'¡Gracias por su compra!'},
+        categories:categories,products:products,users:users,invoices:invoices,movements:movements
+      };
+    }
+
+    function demoInvoice(id, number, date, userId, cashier, method, total, status, items) {
+      return {id:id,number:number,date:date,userId:userId,cashier:cashier,paymentMethod:method,subtotal:total,discount:0,tax:0,total:total,received:method==='Efectivo'?Math.ceil(total/100)*100:total,change:method==='Efectivo'?Math.ceil(total/100)*100-total:0,status:status,voidReason:status==='ANULADA'?'Venta duplicada':'',items:items};
+    }
+
+    function clone(value) { return JSON.parse(JSON.stringify(value)); }
+    function currentUser(token) { return token === 'demo-cashier' ? db.users[1] : db.users[0]; }
+    function dashboard(user) {
+      const invoices = db.invoices;
+      const paid = invoices.filter(function(i){return i.status==='PAGADA';});
+      const low = db.products.filter(function(p){return p.status==='ACTIVO'&&p.stock<=p.minimum;});
+      const daily = [];
+      for (let i=6;i>=0;i--) {
+        const day = new Date(); day.setDate(day.getDate()-i); day.setHours(0,0,0,0);
+        const next = new Date(day); next.setDate(next.getDate()+1);
+        daily.push({date:day.toISOString(),label:new Intl.DateTimeFormat('es-DO',{weekday:'short'}).format(day),total:paid.filter(function(inv){const d=new Date(inv.date);return d>=day&&d<next;}).reduce(function(s,inv){return s+inv.total;},0)});
+      }
+      const todayStart=new Date();todayStart.setHours(0,0,0,0);
+      const today=paid.filter(function(i){return new Date(i.date)>=todayStart;});
+      return {salesToday:today.reduce(function(s,i){return s+i.total;},0),invoiceCountToday:today.length,lowStockCount:low.length,topProduct:'Refresco Cola 20 oz',topProductUnits:18,weekTotal:paid.reduce(function(s,i){return s+i.total;},0),topCashier:'Laura Sánchez',dailySales:daily,latestInvoices:clone(invoices.slice(0,6)),lowStock:clone(low)};
+    }
+
+    function reports() {
+      const paid=db.invoices.filter(function(i){return i.status==='PAGADA';});
+      const details=paid.flatMap(function(i){return i.items;});
+      const total=paid.reduce(function(s,i){return s+i.total;},0);
+      const categories={}; const products={}; let cost=0;
+      details.forEach(function(item){categories[item.category]=(categories[item.category]||0)+item.subtotal; cost+=item.cost*item.quantity; if(!products[item.name])products[item.name]={name:item.name,units:0,total:0};products[item.name].units+=item.quantity;products[item.name].total+=item.subtotal;});
+      const d=dashboard(db.users[0]);
+      return {from:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString(),to:new Date().toISOString(),totalSales:total,invoiceCount:paid.length,averageTicket:total/paid.length,estimatedProfit:total-cost,dailySales:d.dailySales,byCategory:Object.keys(categories).map(function(k){return{label:k,value:categories[k]};}),byCashier:[{label:'Laura Sánchez',value:620},{label:'Carlos Pérez',value:550}],topProducts:Object.values(products).sort(function(a,b){return b.units-a.units;}),lowStock:db.products.filter(function(p){return p.stock<=p.minimum;}),recentMovements:clone(db.movements)};
+    }
+
+    async function call(method, args) {
+      initDb();
+      await new Promise(function(resolve){setTimeout(resolve, 120);});
+      if (method === 'apiLogin') {
+        const credentials=args[0]||{}; const id=String(credentials.identifier||'').toLowerCase();
+        if ((id==='admin'||id==='admin@kiosk.local')&&credentials.password==='Admin123!') return {token:'demo-admin',user:clone(db.users[0])};
+        if ((id==='cajero'||id==='laura')&&credentials.password==='Caja123!') return {token:'demo-cashier',user:clone(db.users[1])};
+        throw new Error('En demo usa admin / Admin123! o cajero / Caja123!.');
+      }
+      if (method === 'apiLogout') return {ok:true};
+      const token=args[0]; const user=currentUser(token);
+      if (method === 'apiBootstrap') return {version:'1.1.1-demo',user:clone(user),config:clone(db.config),categories:clone(db.categories),products:clone(db.products),dashboard:dashboard(user),invoices:clone(db.invoices),movements:user.role==='ADMIN'?clone(db.movements):[],users:user.role==='ADMIN'?clone(db.users):[],reports:user.role==='ADMIN'?reports():null};
+      if (method === 'apiSaveCategory') {
+        const p=args[1]||{};
+        if(user.role!=='ADMIN')throw new Error('Esta acción requiere rol Administrador.');
+        const name=String(p.name||'').trim();
+        if(!name)throw new Error('El nombre de la categoría es obligatorio.');
+        if(db.categories.some(function(category){return category.id!==p.id&&category.name.toLowerCase()===name.toLowerCase();}))throw new Error('Ya existe una categoría con ese nombre.');
+        const makeKey=function(value){return String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');};
+        const fields=(p.fields||[]).map(function(field,index){
+          const label=String(field.label||'').trim(),type=['TEXT','TEXTAREA','NUMBER','SELECT','DATE'].includes(field.type)?field.type:'TEXT';
+          const options=String(field.options||'').split(/[|,]/).map(function(option){return option.trim();}).filter(Boolean);
+          if(!label)throw new Error('Cada característica debe tener un nombre.');
+          if(type==='SELECT'&&!options.length)throw new Error('La característica "'+label+'" necesita opciones.');
+          return{id:field.id||('cf'+Date.now()+index),key:field.key||makeKey(label),label:label,type:type,required:field.required===true||field.required==='TRUE',options:options,order:index+1};
+        });
+        let category=db.categories.find(function(item){return item.id===p.id;});
+        if(category)Object.assign(category,{name:name,description:String(p.description||'').trim(),status:p.status||'ACTIVO',fields:fields});
+        else{category={id:'c'+Date.now(),name:name,description:String(p.description||'').trim(),status:p.status||'ACTIVO',fields:fields};db.categories.push(category);}
+        db.products.filter(function(product){return product.categoryId===category.id;}).forEach(function(product){
+          const oldAttributes=product.attributes||[];
+          product.category=name;
+          product.attributes=fields.map(function(field){const old=oldAttributes.find(function(attribute){return attribute.fieldId===field.id||attribute.key===field.key;});return{fieldId:field.id,key:field.key,label:field.label,type:field.type,value:old?old.value:''};});
+          product.searchText=product.attributes.map(function(attribute){return attribute.value;}).filter(Boolean).join(' ');
+        });
+        db.config.categories=db.categories.filter(function(item){return item.status==='ACTIVO';}).map(function(item){return item.name;});
+        return{ok:true,categories:clone(db.categories),config:clone(db.config),products:clone(db.products)};
+      }
+      if (method === 'apiSaveProduct') {
+        const p=args[1]||{},category=db.categories.find(function(item){return item.id===p.categoryId;});
+        if(!category)throw new Error('Seleccione una categoría válida.');
+        const incoming=p.attributes||{};
+        const attributes=category.fields.map(function(field){
+          const value=String(incoming[field.id]==null?'':incoming[field.id]).trim();
+          if(field.required&&!value)throw new Error('La característica "'+field.label+'" es obligatoria.');
+          return{fieldId:field.id,key:field.key,label:field.label,type:field.type,value:value};
+        });
+        const valueByKey=function(key){const attribute=attributes.find(function(item){return item.key===key;});return attribute?attribute.value:'';};
+        const manualName=String(p.name||'').trim();
+        const brand=valueByKey('marca'),model=valueByKey('modelo');
+        if(!manualName&&(!brand||!model))throw new Error('Escriba el nombre o complete Marca y Modelo.');
+        const name=manualName||(brand+' '+model).trim();
+        const sku=String(p.sku||'').trim(),barcode=String(p.barcode||'').trim();
+        if(sku&&db.products.some(function(item){return item.id!==p.id&&item.sku.toLowerCase()===sku.toLowerCase();}))throw new Error('El SKU ya está registrado.');
+        if(barcode&&db.products.some(function(item){return item.id!==p.id&&item.barcode===barcode;}))throw new Error('El código de barras ya está registrado.');
+        let current=db.products.find(function(x){return x.id===p.id;});
+        const values={sku:sku,barcode:barcode,name:name,manualName:manualName,category:category.name,categoryId:category.id,attributes:attributes,searchText:attributes.map(function(attribute){return attribute.value;}).filter(Boolean).join(' '),price:Number(p.price),cost:Number(p.cost),minimum:Number(p.minimum),imageFileId:p.imageFileId||'',status:p.status||'ACTIVO'};
+        if(current)Object.assign(current,values);
+        else{values.id='p'+Date.now();values.stock=Number(p.stock)||0;values.imageUrl='';db.products.push(values);}
+        return {ok:true,products:clone(db.products)};
+      }
+      if (method === 'apiInventoryMovement') {
+        const p=args[1], product=db.products.find(function(x){return x.id===p.productId;}), before=product.stock, qty=Number(p.quantity);
+        if(p.type==='SALIDA'&&qty>before)throw new Error('La salida excede el stock disponible.');
+        product.stock+=p.type==='ENTRADA'?qty:-qty;
+        db.movements.unshift({id:'m'+Date.now(),date:new Date().toISOString(),productId:product.id,sku:product.sku,product:product.name,type:p.type,quantity:p.type==='ENTRADA'?qty:-qty,comment:p.comment,user:user.name,stockBefore:before,stockAfter:product.stock,invoiceId:''});
+        return {ok:true,products:clone(db.products),movements:clone(db.movements)};
+      }
+      if (method === 'apiListMovements') {
+        const p=args[1]||{};
+        const from=p.from?new Date(p.from+'T00:00:00'):null,to=p.to?new Date(p.to+'T23:59:59.999'):null;
+        return clone(db.movements.filter(function(movement){
+          const date=new Date(movement.date);
+          return(!p.productId||movement.productId===p.productId)&&(!p.type||movement.type===p.type)&&(!from||date>=from)&&(!to||date<=to);
+        }).slice(0,Number(p.limit)||1000));
+      }
+      if (method === 'apiCreateSale') {
+        const p=args[1], items=p.items.map(function(line){const product=db.products.find(function(x){return x.id===line.productId;});if(!product)throw new Error('Uno de los productos ya no está disponible.');const category=db.categories.find(function(x){return x.id===product.categoryId;});if(product.status!=='ACTIVO'||!category||category.status!=='ACTIVO')throw new Error('Uno de los productos ya no está disponible.');if(line.quantity>product.stock)throw new Error(product.name+' no tiene suficiente stock.');product.stock-=line.quantity;return{productId:product.id,sku:product.sku,name:product.name,category:product.category,quantity:line.quantity,price:product.price,cost:product.cost,subtotal:product.price*line.quantity};});
+        const subtotal=items.reduce(function(s,i){return s+i.subtotal;},0),discount=Math.min(subtotal,Number(p.discount)||0),tax=db.config.taxEnabled?(subtotal-discount)*db.config.taxRate/100:0,total=roundMoney(subtotal-discount+tax),id='f'+Date.now(),number=db.config.invoicePrefix+'-'+String(db.config.invoiceNext++).padStart(6,'0');
+        const invoice={id:id,number:number,date:new Date().toISOString(),userId:user.id,cashier:user.name,paymentMethod:p.paymentMethod,subtotal:subtotal,discount:discount,tax:tax,total:total,received:Number(p.received)||total,change:p.paymentMethod==='Efectivo'?Math.max(0,(Number(p.received)||0)-total):0,status:'PAGADA',voidReason:'',items:items,business:clone(db.config)};
+        db.invoices.unshift(invoice); items.forEach(function(item){db.movements.unshift({id:'m'+Date.now()+item.productId,date:invoice.date,productId:item.productId,sku:item.sku,product:item.name,type:'VENTA',quantity:-item.quantity,comment:'Venta '+number,user:user.name,stockBefore:db.products.find(function(x){return x.id===item.productId;}).stock+item.quantity,stockAfter:db.products.find(function(x){return x.id===item.productId;}).stock,invoiceId:id});});
+        return {ok:true,invoice:clone(invoice),products:clone(db.products),dashboard:dashboard(user)};
+      }
+      if (method === 'apiListInvoices') return clone(db.invoices);
+      if (method === 'apiGetInvoice') {const inv=db.invoices.find(function(i){return i.id===args[1];});const copy=clone(inv);copy.business=clone(db.config);return copy;}
+      if (method === 'apiVoidInvoice') {const p=args[1],inv=db.invoices.find(function(i){return i.id===p.invoiceId;});inv.status='ANULADA';inv.voidReason=p.reason;inv.items.forEach(function(item){db.products.find(function(x){return x.id===item.productId;}).stock+=item.quantity;});return{ok:true,invoice:clone(inv),products:clone(db.products),invoices:clone(db.invoices)};}
+      if (method === 'apiSaveUser') {const p=args[1];let u=db.users.find(function(x){return x.id===p.id;});if(u)Object.assign(u,{name:p.name,username:p.username,email:p.email,role:p.role,status:p.status});else db.users.push({id:'u'+Date.now(),name:p.name,username:p.username,email:p.email,role:p.role,status:p.status,lastAccess:''});return{ok:true,users:clone(db.users)};}
+      if (method === 'apiGetReports') return reports();
+      if (method === 'apiSaveSettings') {const p=args[1];db.config.businessName=p.BUSINESS_NAME;db.config.currency=p.CURRENCY;db.config.invoicePrefix=p.INVOICE_PREFIX;db.config.taxEnabled=p.TAX_ENABLED==='TRUE';db.config.taxRate=Number(p.TAX_RATE);db.config.paymentMethods=p.PAYMENT_METHODS.split(',').map(function(x){return x.trim();});db.config.address=p.ADDRESS;db.config.taxId=p.TAX_ID;db.config.phone=p.PHONE;db.config.logoFileId=p.LOGO_FILE_ID;db.config.primaryColor=p.PRIMARY_COLOR;db.config.receiptFooter=p.RECEIPT_FOOTER;return{ok:true,config:clone(db.config)};}
+      if (method === 'apiChangeMyPassword') return {ok:true};
+      throw new Error('Método demo no implementado: '+method);
+    }
+    return {call:call};
+  })();
+
+  window.navigate = navigate;
+  window.setPosCategory = setPosCategory;
+  window.addToCart = addToCart;
+  window.changeCartQuantity = changeCartQuantity;
+  window.removeFromCart = removeFromCart;
+  window.clearCart = clearCart;
+  window.selectPayment = selectPayment;
+  window.updateCheckout = updateCheckout;
+  window.checkout = checkout;
+  window.openProductModal = openProductModal;
+  window.openCategoryManager = openCategoryManager;
+  window.openCategoryEditor = openCategoryEditor;
+  window.addCategoryFieldRow = addCategoryFieldRow;
+  window.toggleCategoryFieldOptions = toggleCategoryFieldOptions;
+  window.removeCategoryField = removeCategoryField;
+  window.openInventoryModal = openInventoryModal;
+  window.navigateProductMovements = navigateProductMovements;
+  window.refreshInventoryMovements = refreshInventoryMovements;
+  window.clearInventoryFilters = clearInventoryFilters;
+  window.refreshInvoices = refreshInvoices;
+  window.openInvoice = openInvoice;
+  window.printInvoice = printInvoice;
+  window.printActiveReceipt = printActiveReceipt;
+  window.openVoidInvoice = openVoidInvoice;
+  window.openUserModal = openUserModal;
+  window.loadReports = loadReports;
+  window.closeModal = closeModal;
+  window.closeDrawer = closeDrawer;
+  window.overlayClose = overlayClose;
+</script>
