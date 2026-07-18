@@ -2,9 +2,10 @@
  * KioskoPOS
  * Punto de venta e inventario para Google Apps Script.
  */
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.1.2';
 const APP_TIMEZONE = 'America/Santo_Domingo';
 const DB_PROPERTY = 'KIOSKOPOS_SPREADSHEET_ID';
+const APP_SCRIPT_FAVICON_URL = 'https://www.gstatic.com/images/icons/material/system/2x/storefront_black_48dp.png';
 const SESSION_HOURS = 12;
 const REMEMBER_SESSION_DAYS = 7;
 
@@ -84,13 +85,17 @@ const DEFAULT_CONFIG = Object.freeze({
 });
 
 function doGet() {
+  const branding = getBootBranding_();
   const template = HtmlService.createTemplateFromFile('Index');
   template.appVersion = APP_VERSION;
-  template.logoDataUrl = safeLogoDataUrl_();
+  template.appName = branding.appName;
+  template.businessName = branding.businessName;
+  template.logoDataUrl = branding.logoDataUrl;
+  template.faviconDataUrl = branding.faviconDataUrl;
   return template
     .evaluate()
-    .setTitle('KioskoPOS')
-    .setFaviconUrl('https://www.gstatic.com/images/branding/product/2x/sheets_2020q4_48dp.png')
+    .setTitle(branding.appName)
+    .setFaviconUrl(APP_SCRIPT_FAVICON_URL)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
@@ -515,6 +520,44 @@ function safeLogoDataUrl_() {
     console.warn('No se pudo cargar el logo: ' + error.message);
     return '';
   }
+}
+
+function getBootBranding_() {
+  const defaults = {
+    appName: DEFAULT_CONFIG.APP_NAME,
+    businessName: DEFAULT_CONFIG.BUSINESS_NAME,
+    primaryColor: DEFAULT_CONFIG.PRIMARY_COLOR,
+    logoDataUrl: ''
+  };
+  try {
+    if (!PropertiesService.getScriptProperties().getProperty(DB_PROPERTY)) {
+      return Object.assign(defaults, {faviconDataUrl: buildFaviconDataUrl_(defaults)});
+    }
+    const config = getConfigMap_();
+    const branding = {
+      appName: cleanText_(config.APP_NAME || defaults.appName, 80),
+      businessName: cleanText_(config.BUSINESS_NAME || defaults.businessName, 120),
+      primaryColor: cleanText_(config.PRIMARY_COLOR || defaults.primaryColor, 20),
+      logoDataUrl: safeLogoDataUrl_()
+    };
+    branding.faviconDataUrl = buildFaviconDataUrl_(branding);
+    return branding;
+  } catch (error) {
+    console.warn('No se pudo cargar el branding: ' + error.message);
+    return Object.assign(defaults, {faviconDataUrl: buildFaviconDataUrl_(defaults)});
+  }
+}
+
+function buildFaviconDataUrl_(branding) {
+  const label = cleanText_(branding.businessName || branding.appName || 'K', 120);
+  const initial = (label.trim().charAt(0) || 'K').toUpperCase();
+  const color = /^#[0-9a-f]{6}$/i.test(String(branding.primaryColor || ''))
+    ? branding.primaryColor : DEFAULT_CONFIG.PRIMARY_COLOR;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+    '<rect width="64" height="64" rx="14" fill="' + color + '"/>' +
+    '<text x="32" y="42" text-anchor="middle" font-family="Arial,sans-serif" font-size="32" font-weight="800" fill="white">' +
+    initial.replace(/[<>&"']/g, '') + '</text></svg>';
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 }
 
 function addAudit_(user, action, entity, entityId, detail) {
