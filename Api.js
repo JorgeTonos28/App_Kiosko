@@ -595,7 +595,7 @@ function apiSaveSettings(token, payload) {
   const user = requireAdmin_(token);
   payload = payload || {};
   const allowed = [
-    'BUSINESS_NAME', 'CURRENCY', 'INVOICE_PREFIX', 'TAX_ENABLED', 'TAX_RATE',
+    'APP_NAME', 'BUSINESS_NAME', 'CURRENCY', 'INVOICE_PREFIX', 'TAX_ENABLED', 'TAX_RATE',
     'PAYMENT_METHODS', 'ADDRESS', 'TAX_ID', 'PHONE',
     'LOGO_FILE_ID', 'PRIMARY_COLOR', 'RECEIPT_FOOTER'
   ];
@@ -605,7 +605,8 @@ function apiSaveSettings(token, payload) {
       values[key] = cleanText_(payload[key], key === 'RECEIPT_FOOTER' ? 500 : 300);
     }
   });
-  if (!values.BUSINESS_NAME) throw new Error('El nombre del kiosko es obligatorio.');
+  if (!values.APP_NAME) throw new Error('El nombre de la app es obligatorio.');
+  if (!values.BUSINESS_NAME) throw new Error('El nombre del negocio es obligatorio.');
   if (values.TAX_RATE && (toNumber_(values.TAX_RATE) < 0 || toNumber_(values.TAX_RATE) > 100)) {
     throw new Error('La tasa de impuesto debe estar entre 0 y 100.');
   }
@@ -814,7 +815,7 @@ function getPublicConfig_() {
     .filter(function (category) { return category.Estado === 'ACTIVO'; })
     .sort(function (a, b) { return String(a.Nombre).localeCompare(String(b.Nombre), 'es'); })
     .map(function (category) { return category.Nombre; });
-  return {
+  const publicConfig = {
     appName: config.APP_NAME || 'KioskoPOS',
     businessName: config.BUSINESS_NAME || 'KioskoPOS',
     currency: config.CURRENCY || 'RD$',
@@ -832,6 +833,8 @@ function getPublicConfig_() {
     primaryColor: config.PRIMARY_COLOR || '#0b2f78',
     receiptFooter: config.RECEIPT_FOOTER || '¡Gracias por su compra!'
   };
+  publicConfig.faviconDataUrl = buildFaviconDataUrl_(publicConfig);
+  return publicConfig;
 }
 
 function splitList_(value) {

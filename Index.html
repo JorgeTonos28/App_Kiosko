@@ -3,7 +3,10 @@
 <head>
   <base target="_top">
   <meta charset="utf-8">
+  <title><?= appName ?></title>
   <meta name="theme-color" content="#0b2f78">
+  <link id="appFavicon" rel="icon" href="<?= faviconDataUrl ?>">
+  <link id="appShortcutIcon" rel="shortcut icon" href="<?= faviconDataUrl ?>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0&display=swap" rel="stylesheet">
@@ -44,7 +47,7 @@
         <div class="login-heading">
           <span class="eyebrow">BIENVENIDO</span>
           <h2>Iniciar sesión</h2>
-          <p>Usa tus credenciales internas de KioskoPOS.</p>
+          <p id="loginCredentialHelp">Usa tus credenciales internas de <?= appName ?>.</p>
         </div>
         <label class="field">
           <span>Usuario o correo</span>
@@ -72,7 +75,7 @@
         </button>
         <div id="loginError" class="inline-error" hidden></div>
         <p class="login-help">¿Necesitas acceso? Contacta a un administrador.</p>
-        <small class="version-label">KioskoPOS v<?= appVersion ?></small>
+        <small class="version-label" id="versionLabel"><?= appName ?> v<?= appVersion ?></small>
       </form>
     </section>
   </div>
@@ -81,7 +84,7 @@
     <aside id="sidebar" class="sidebar">
       <div class="sidebar-brand">
         <div class="brand-mark"><span class="material-symbols-rounded">storefront</span></div>
-        <div><strong id="sidebarBusiness">KioskoPOS</strong><small>Retail management</small></div>
+        <div><strong id="sidebarBusiness"><?= businessName ?></strong><small id="sidebarAppName"><?= appName ?></small></div>
         <button id="closeSidebar" class="icon-button sidebar-close" aria-label="Cerrar menú">
           <span class="material-symbols-rounded">close</span>
         </button>
@@ -144,7 +147,10 @@
   <script>
     window.KIOSKO_BOOT = {
       version: <?!= JSON.stringify(appVersion || "") ?>,
-      logoDataUrl: <?!= JSON.stringify(logoDataUrl || "") ?>
+      appName: <?!= JSON.stringify(appName || "KioskoPOS") ?>,
+      businessName: <?!= JSON.stringify(businessName || "KioskoPOS") ?>,
+      logoDataUrl: <?!= JSON.stringify(logoDataUrl || "") ?>,
+      faviconDataUrl: <?!= JSON.stringify(faviconDataUrl || "") ?>
     };
   </script>
   <?!= include('Scripts'); ?>

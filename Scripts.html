@@ -74,7 +74,7 @@
 
   function init() {
     bindShellEvents();
-    applyBootLogo();
+    applyBranding(window.KIOSKO_BOOT || {});
     if (window.top !== window.self && window.innerWidth < 760) {
       try { window.top.location = window.location.href; } catch (error) {}
     }
@@ -113,10 +113,41 @@
   }
 
   function applyBootLogo() {
-    const logo = window.KIOSKO_BOOT && window.KIOSKO_BOOT.logoDataUrl;
-    if (logo) {
-      document.getElementById('loginLogo').innerHTML = '<img alt="Logo" src="' + logo + '">';
+    applyBranding(window.KIOSKO_BOOT || {});
+  }
+
+  function applyBranding(source) {
+    source = source || {};
+    const appName = source.appName || (App.config && App.config.appName) || 'KioskoPOS';
+    const businessName = source.businessName || (App.config && App.config.businessName) || appName;
+    const favicon = source.faviconDataUrl || (App.config && App.config.faviconDataUrl) || '';
+    const logo = source.logoDataUrl || (App.config && App.config.logoDataUrl) || '';
+    const primaryColor = source.primaryColor || (App.config && App.config.primaryColor) || '#0b2f78';
+    document.title = appName;
+    document.querySelector('meta[name="theme-color"]').setAttribute('content', primaryColor);
+    updateText('loginCredentialHelp', 'Usa tus credenciales internas de ' + appName + '.');
+    updateText('versionLabel', appName + ' v' + ((window.KIOSKO_BOOT && window.KIOSKO_BOOT.version) || ''));
+    updateText('sidebarBusiness', businessName);
+    updateText('sidebarAppName', appName);
+    if (favicon) {
+      updateFavicon('appFavicon', favicon);
+      updateFavicon('appShortcutIcon', favicon);
     }
+    if (logo) {
+      document.getElementById('loginLogo').innerHTML = '<img alt="Logo de ' + escapeAttr(businessName) + '" src="' + logo + '">';
+    } else {
+      document.getElementById('loginLogo').innerHTML = icon('storefront');
+    }
+  }
+
+  function updateText(id, value) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = value;
+  }
+
+  function updateFavicon(id, href) {
+    const element = document.getElementById(id);
+    if (element) element.href = href;
   }
 
   async function handleLogin(event) {
@@ -142,7 +173,7 @@
   }
 
   async function bootstrap() {
-    setBusy(true, 'Preparando KioskoPOS...');
+    setBusy(true, 'Preparando ' + ((window.KIOSKO_BOOT && window.KIOSKO_BOOT.appName) || 'KioskoPOS') + '...');
     try {
       const data = await server('apiBootstrap', App.token);
       App.user = data.user;
@@ -200,7 +231,9 @@
     document.getElementById('topbarUserRole').textContent = roleLabel(App.user.role);
     document.getElementById('topbarAvatar').textContent = initial;
     document.getElementById('sidebarBusiness').textContent = App.config.businessName || 'KioskoPOS';
+    document.getElementById('sidebarAppName').textContent = App.config.appName || 'KioskoPOS';
     document.documentElement.style.setProperty('--primary', App.config.primaryColor || '#0b2f78');
+    applyBranding(App.config);
   }
 
   function renderNav() {
@@ -1222,7 +1255,8 @@
       pageHeader('Configuración del sistema', 'Personaliza identidad, facturación y métodos de pago.') +
       '<form id="settingsForm"><section class="settings-grid">' +
         '<article class="card"><div class="card-header"><h2 class="section-title">Datos del kiosko</h2>' + icon('storefront') + '</div><div class="card-body form-grid">' +
-          fieldInput('BUSINESS_NAME', 'Nombre del kiosko', c.businessName, '', true) +
+          fieldInput('APP_NAME', 'Nombre de la app', c.appName, '', true) +
+          fieldInput('BUSINESS_NAME', 'Nombre del negocio', c.businessName, '', true) +
           fieldInput('PHONE', 'Teléfono', c.phone, 'Opcional') +
           fieldInput('ADDRESS', 'Dirección', c.address, 'Opcional', false, 'text', '', 'field--full') +
           fieldInput('TAX_ID', 'RNC / dato fiscal', c.taxId, 'Opcional') +
@@ -1729,7 +1763,7 @@
         {id:'m4',date:daysAgo(2,10),productId:'p6',sku:'DUL-001',product:'Chocolate con leche',type:'SALIDA',quantity:-2,comment:'Productos vencidos',user:'Administrador',stockBefore:5,stockAfter:3,invoiceId:''}
       ];
       db = {
-        config:{appName:'KioskoPOS',businessName:'KioskoPOS',currency:'RD$',invoicePrefix:'KP',invoiceNext:129,taxEnabled:false,taxRate:18,paymentMethods:['Efectivo','Tarjeta','Transferencia','Mixto'],categories:categories.map(function(category){return category.name;}),address:'Av. Principal #123, Santo Domingo',taxId:'101-00123-4',phone:'809-555-0101',logoFileId:'',logoDataUrl:'',primaryColor:'#0b2f78',receiptFooter:'¡Gracias por su compra!'},
+        config:{appName:'KioskoPOS',businessName:'KioskoPOS',currency:'RD$',invoicePrefix:'KP',invoiceNext:129,taxEnabled:false,taxRate:18,paymentMethods:['Efectivo','Tarjeta','Transferencia','Mixto'],categories:categories.map(function(category){return category.name;}),address:'Av. Principal #123, Santo Domingo',taxId:'101-00123-4',phone:'809-555-0101',logoFileId:'',logoDataUrl:'',faviconDataUrl:'',primaryColor:'#0b2f78',receiptFooter:'¡Gracias por su compra!'},
         categories:categories,products:products,users:users,invoices:invoices,movements:movements
       };
     }
@@ -1853,7 +1887,7 @@
       if (method === 'apiVoidInvoice') {const p=args[1],inv=db.invoices.find(function(i){return i.id===p.invoiceId;});inv.status='ANULADA';inv.voidReason=p.reason;inv.items.forEach(function(item){db.products.find(function(x){return x.id===item.productId;}).stock+=item.quantity;});return{ok:true,invoice:clone(inv),products:clone(db.products),invoices:clone(db.invoices)};}
       if (method === 'apiSaveUser') {const p=args[1];let u=db.users.find(function(x){return x.id===p.id;});if(u)Object.assign(u,{name:p.name,username:p.username,email:p.email,role:p.role,status:p.status});else db.users.push({id:'u'+Date.now(),name:p.name,username:p.username,email:p.email,role:p.role,status:p.status,lastAccess:''});return{ok:true,users:clone(db.users)};}
       if (method === 'apiGetReports') return reports();
-      if (method === 'apiSaveSettings') {const p=args[1];db.config.businessName=p.BUSINESS_NAME;db.config.currency=p.CURRENCY;db.config.invoicePrefix=p.INVOICE_PREFIX;db.config.taxEnabled=p.TAX_ENABLED==='TRUE';db.config.taxRate=Number(p.TAX_RATE);db.config.paymentMethods=p.PAYMENT_METHODS.split(',').map(function(x){return x.trim();});db.config.address=p.ADDRESS;db.config.taxId=p.TAX_ID;db.config.phone=p.PHONE;db.config.logoFileId=p.LOGO_FILE_ID;db.config.primaryColor=p.PRIMARY_COLOR;db.config.receiptFooter=p.RECEIPT_FOOTER;return{ok:true,config:clone(db.config)};}
+      if (method === 'apiSaveSettings') {const p=args[1];db.config.appName=p.APP_NAME;db.config.businessName=p.BUSINESS_NAME;db.config.currency=p.CURRENCY;db.config.invoicePrefix=p.INVOICE_PREFIX;db.config.taxEnabled=p.TAX_ENABLED==='TRUE';db.config.taxRate=Number(p.TAX_RATE);db.config.paymentMethods=p.PAYMENT_METHODS.split(',').map(function(x){return x.trim();});db.config.address=p.ADDRESS;db.config.taxId=p.TAX_ID;db.config.phone=p.PHONE;db.config.logoFileId=p.LOGO_FILE_ID;db.config.primaryColor=p.PRIMARY_COLOR;db.config.receiptFooter=p.RECEIPT_FOOTER;return{ok:true,config:clone(db.config)};}
       if (method === 'apiChangeMyPassword') return {ok:true};
       throw new Error('Método demo no implementado: '+method);
     }
