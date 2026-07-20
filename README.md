@@ -68,6 +68,16 @@ Las características variables se guardan en `AtributosProducto` y se relacionan
 
 En Config, `LOGO_FILE_ID` contiene el ID del logo. En productos, `ImagenFileId` contiene el ID de su foto. La app obtiene el blob desde Drive y lo convierte a una URL `data:image/...;base64`.
 
+## Signature web
+
+La app puede mostrar una firma o sello en el footer, alineada a la esquina inferior derecha cuando el usuario llega al final de la pantalla. Esta firma no se administra desde la UI; se configura solo en la hoja `Config`:
+
+- `WEB_SIGNATURE_ENABLED`: `TRUE` para mostrarla o `FALSE` para ocultarla.
+- `WEB_SIGNATURE_FILE_ID`: ID del archivo de imagen en Google Drive.
+- `WEB_SIGNATURE_WIDTH`: ancho visual en pixeles, entre `60` y `420`.
+
+Para usar una nueva imagen, suba el PNG a Drive, comparta el archivo para que el usuario que despliega la Web App pueda leerlo y copie el ID del enlace en `WEB_SIGNATURE_FILE_ID`.
+
 ## Desarrollo con clasp
 
 ```text
