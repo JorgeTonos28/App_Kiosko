@@ -830,6 +830,10 @@ function getPublicConfig_() {
     phone: config.PHONE || '',
     logoFileId: config.LOGO_FILE_ID || '',
     logoDataUrl: safeLogoDataUrl_(),
+    webSignatureEnabled: asBoolean_(config.WEB_SIGNATURE_ENABLED == null ? 'TRUE' : config.WEB_SIGNATURE_ENABLED),
+    webSignatureFileId: config.WEB_SIGNATURE_FILE_ID || '',
+    webSignatureDataUrl: safeImageDataUrlFromConfig_('WEB_SIGNATURE_FILE_ID', 'firma web'),
+    webSignatureWidth: Math.min(420, Math.max(60, Math.floor(toNumber_(config.WEB_SIGNATURE_WIDTH, 140)) || 140)),
     primaryColor: config.PRIMARY_COLOR || '#0b2f78',
     receiptFooter: config.RECEIPT_FOOTER || '¡Gracias por su compra!'
   };

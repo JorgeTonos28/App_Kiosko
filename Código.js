@@ -2,7 +2,7 @@
  * KioskoPOS
  * Punto de venta e inventario para Google Apps Script.
  */
-const APP_VERSION = '1.1.2';
+const APP_VERSION = '1.1.3';
 const APP_TIMEZONE = 'America/Santo_Domingo';
 const DB_PROPERTY = 'KIOSKOPOS_SPREADSHEET_ID';
 const APP_SCRIPT_FAVICON_URL = 'https://www.gstatic.com/images/icons/material/system/2x/storefront_black_48dp.png';
@@ -80,6 +80,9 @@ const DEFAULT_CONFIG = Object.freeze({
   TAX_ID: '',
   PHONE: '',
   LOGO_FILE_ID: '',
+  WEB_SIGNATURE_ENABLED: 'TRUE',
+  WEB_SIGNATURE_FILE_ID: '',
+  WEB_SIGNATURE_WIDTH: '140',
   PRIMARY_COLOR: '#0b2f78',
   RECEIPT_FOOTER: '¡Gracias por su compra!'
 });
@@ -513,11 +516,15 @@ function getDriveImageDataUrl_(fileId) {
 }
 
 function safeLogoDataUrl_() {
+  return safeImageDataUrlFromConfig_('LOGO_FILE_ID', 'logo');
+}
+
+function safeImageDataUrlFromConfig_(key, label) {
   try {
     if (!PropertiesService.getScriptProperties().getProperty(DB_PROPERTY)) return '';
-    return getImageDataUrlFromConfig_('LOGO_FILE_ID');
+    return getImageDataUrlFromConfig_(key);
   } catch (error) {
-    console.warn('No se pudo cargar el logo: ' + error.message);
+    console.warn('No se pudo cargar ' + (label || key) + ': ' + error.message);
     return '';
   }
 }

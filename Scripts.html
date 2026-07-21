@@ -129,6 +129,7 @@
     updateText('versionLabel', appName + ' v' + ((window.KIOSKO_BOOT && window.KIOSKO_BOOT.version) || ''));
     updateText('sidebarBusiness', businessName);
     updateText('sidebarAppName', appName);
+    updateText('footerAppName', appName ? appName + ' v' + ((window.KIOSKO_BOOT && window.KIOSKO_BOOT.version) || '') : '');
     if (favicon) {
       updateFavicon('appFavicon', favicon);
       updateFavicon('appShortcutIcon', favicon);
@@ -138,6 +139,7 @@
     } else {
       document.getElementById('loginLogo').innerHTML = icon('storefront');
     }
+    renderWebSignature(source);
   }
 
   function updateText(id, value) {
@@ -148,6 +150,23 @@
   function updateFavicon(id, href) {
     const element = document.getElementById(id);
     if (element) element.href = href;
+  }
+
+  function renderWebSignature(source) {
+    source = source || {};
+    const signature = document.getElementById('webSignature');
+    if (!signature) return;
+    const enabled = source.webSignatureEnabled !== false;
+    const image = source.webSignatureDataUrl || '';
+    const width = Math.min(420, Math.max(60, Number(source.webSignatureWidth || 140)));
+    if (!enabled || !image) {
+      signature.hidden = true;
+      signature.innerHTML = '';
+      return;
+    }
+    signature.style.setProperty('--signature-width', width + 'px');
+    signature.innerHTML = '<img src="' + escapeAttr(image) + '" alt="Signature">';
+    signature.hidden = false;
   }
 
   async function handleLogin(event) {
@@ -207,6 +226,7 @@
     App.token = '';
     App.user = null;
     App.cart = [];
+    renderWebSignature({});
     showLogin();
     if (token) server('apiLogout', token).catch(function () {});
   }
@@ -1763,7 +1783,7 @@
         {id:'m4',date:daysAgo(2,10),productId:'p6',sku:'DUL-001',product:'Chocolate con leche',type:'SALIDA',quantity:-2,comment:'Productos vencidos',user:'Administrador',stockBefore:5,stockAfter:3,invoiceId:''}
       ];
       db = {
-        config:{appName:'KioskoPOS',businessName:'KioskoPOS',currency:'RD$',invoicePrefix:'KP',invoiceNext:129,taxEnabled:false,taxRate:18,paymentMethods:['Efectivo','Tarjeta','Transferencia','Mixto'],categories:categories.map(function(category){return category.name;}),address:'Av. Principal #123, Santo Domingo',taxId:'101-00123-4',phone:'809-555-0101',logoFileId:'',logoDataUrl:'',faviconDataUrl:'',primaryColor:'#0b2f78',receiptFooter:'¡Gracias por su compra!'},
+        config:{appName:'KioskoPOS',businessName:'KioskoPOS',currency:'RD$',invoicePrefix:'KP',invoiceNext:129,taxEnabled:false,taxRate:18,paymentMethods:['Efectivo','Tarjeta','Transferencia','Mixto'],categories:categories.map(function(category){return category.name;}),address:'Av. Principal #123, Santo Domingo',taxId:'101-00123-4',phone:'809-555-0101',logoFileId:'',logoDataUrl:'',faviconDataUrl:'',webSignatureEnabled:true,webSignatureFileId:'',webSignatureDataUrl:'',webSignatureWidth:140,primaryColor:'#0b2f78',receiptFooter:'¡Gracias por su compra!'},
         categories:categories,products:products,users:users,invoices:invoices,movements:movements
       };
     }
